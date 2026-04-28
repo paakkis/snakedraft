@@ -52,7 +52,7 @@ type RecentMatch struct {
 }
 
 func FetchLeetifyProfile(steam64ID string) (*LeetifyProfile, error) {
-	url := fmt.Sprintf("https://api.leetify.com/v3/profile?steam64_id=%s", steam64ID)
+	url := fmt.Sprintf("https://api-public.cs-prod.leetify.com/v3/profile?steam64_id=%s", steam64ID)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)

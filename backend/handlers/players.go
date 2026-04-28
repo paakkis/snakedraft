@@ -41,6 +41,7 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Could not resolve Steam URL: " + err.Error()})
 		return
 	}
+	log.Printf("[players] input=%q → steam64=%s vanity=%s", body.SteamURL, steam64ID, vanityURL)
 
 	var exists bool
 	h.db.QueryRow(
