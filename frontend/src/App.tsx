@@ -19,42 +19,42 @@ function CreateTournamentForm() {
 
   return (
     <div className="flex flex-col gap-3">
-    <form onSubmit={handleSubmit} className="flex flex-wrap gap-3 items-end">
-      <div className="flex-1 min-w-48">
-        <label className="block text-xs text-gray-500 mb-1">Tournament name</label>
-        <input
-          type="text"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="Friday Night Cup"
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
-        />
-      </div>
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">Team size</label>
-        <select
-          value={teamSize}
-          onChange={e => setTeamSize(Number(e.target.value))}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+      <form onSubmit={handleSubmit} className="flex flex-wrap gap-3 items-end">
+        <div className="flex-1 min-w-48">
+          <label className="block text-xs text-gray-500 mb-1">Tournament name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Friday Night Cup"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Team size</label>
+          <select
+            value={teamSize}
+            onChange={e => setTeamSize(Number(e.target.value))}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+          >
+            {[2, 3, 4, 5, 6].map(n => (
+              <option key={n} value={n}>{n}v{n}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="submit"
+          disabled={loading || !name.trim()}
+          className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg text-sm transition-colors"
         >
-          {[2, 3, 4, 5, 6].map(n => (
-            <option key={n} value={n}>{n}v{n}</option>
-          ))}
-        </select>
-      </div>
-      <button
-        type="submit"
-        disabled={loading || !name.trim()}
-        className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg text-sm transition-colors"
-      >
-        {loading ? 'Creating...' : 'Create'}
-      </button>
-    </form>
-    {error && (
-      <p className="text-sm text-red-400 bg-red-950 border border-red-800 rounded px-3 py-2">
-        {error}
-      </p>
-    )}
+          {loading ? 'Creating...' : 'Create'}
+        </button>
+      </form>
+      {error && (
+        <p className="text-sm text-red-400 bg-red-950 border border-red-800 rounded px-3 py-2">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
@@ -71,7 +71,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      {/* Header */}
       <header className="border-b border-gray-800 bg-gray-900">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -79,19 +78,18 @@ export default function App() {
             <div>
               <h1 className="text-lg font-bold text-white leading-tight">CS2 Tournament Balancer</h1>
               {tournament && (
-                <p className="text-xs text-gray-500">{tournament.name} · {tournament.team_size}v{tournament.team_size}</p>
+                <p className="text-xs text-gray-500">
+                  {tournament.name} &middot; {tournament.team_size}v{tournament.team_size}
+                </p>
               )}
             </div>
           </div>
           {tournament && (
             <button
-              onClick={() => {
-                window.location.hash = ''
-                reset()
-              }}
+              onClick={() => { window.location.hash = ''; reset() }}
               className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
             >
-              ← New tournament
+              &larr; New tournament
             </button>
           )}
         </div>
@@ -107,7 +105,6 @@ export default function App() {
           </section>
         ) : (
           <>
-            {/* Add Player */}
             <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
               <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
                 Add Player
@@ -115,19 +112,16 @@ export default function App() {
               <PlayerInput />
             </section>
 
-            {/* Player List */}
             <section>
               <PlayerList />
             </section>
 
-            {/* Balance */}
             {tournament.players.length >= 2 && (
               <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
                 <TeamBuilder />
               </section>
             )}
 
-            {/* Teams */}
             {tournament.teams.length > 0 && (
               <section>
                 <TeamView />
