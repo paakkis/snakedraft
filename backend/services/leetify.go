@@ -51,11 +51,17 @@ type RecentMatch struct {
 	DataSource    string  `json:"data_source"`
 }
 
-func FetchLeetifyProfile(steam64ID string) (*LeetifyProfile, error) {
-	url := fmt.Sprintf("https://api-public.cs-prod.leetify.com/v3/profile?steam64_id=%s", steam64ID)
+func FetchLeetifyProfile(steam64ID, apiKey string) (*LeetifyProfile, error) {
+	url := fmt.Sprintf("https://api.cs-prod.leetify.com/api/profile/id/%s", steam64ID)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

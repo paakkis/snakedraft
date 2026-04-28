@@ -20,3 +20,7 @@ func New(db *sql.DB, cfg config.Config) *Handler {
 		steam: services.NewSteamService(cfg.SteamAPIKey),
 	}
 }
+
+func (h *Handler) fetchLeetify(steam64ID string) (*services.LeetifyProfile, error) {
+	return services.FetchLeetifyProfile(steam64ID, h.cfg.LeetifyAPIKey)
+}

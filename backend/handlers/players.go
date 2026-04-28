@@ -60,7 +60,7 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	profile, leetifyErr := services.FetchLeetifyProfile(steam64ID)
+	profile, leetifyErr := h.fetchLeetify(steam64ID)
 	if leetifyErr != nil {
 		log.Printf("[players] Leetify fetch failed for %s: %v", steam64ID, leetifyErr)
 	}
@@ -193,7 +193,7 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		return
 	}
 
-	profile, _ := services.FetchLeetifyProfile(steam64ID)
+	profile, _ := h.fetchLeetify(steam64ID)
 
 	var (
 		skillScore    *float64
