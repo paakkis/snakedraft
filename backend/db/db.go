@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log"
 	"sort"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -12,15 +14,27 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// Connect opens a Postgres connection, retrying up to 10 times with
+// exponential backoff. This tolerates the race between the backend
+// container starting and Docker's internal DNS registering the "db" host.
 func Connect(url string) (*sql.DB, error) {
-	database, err := sql.Open("postgres", url)
-	if err != nil {
-		return nil, err
+	var (
+		database *sql.DB
+		err      error
+	)
+	for attempt := 1; attempt <= 10; attempt++ {
+		database, err = sql.Open("postgres", url)
+		if err == nil {
+			err = database.Ping()
+		}
+		if err == nil {
+			return database, nil
+		}
+		wait := time.Duration(attempt) * 500 * time.Millisecond
+		log.Printf("DB not ready (attempt %d/10): %v — retrying in %s", attempt, err, wait)
+		time.Sleep(wait)
 	}
-	if err := database.Ping(); err != nil {
-		return nil, err
-	}
-	return database, nil
+	return nil, fmt.Errorf("could not connect to database after 10 attempts: %w", err)
 }
 
 func Migrate(database *sql.DB) error {
@@ -59,9 +73,8 @@ func Migrate(database *sql.DB) error {
 		if _, err := database.Exec(string(content)); err != nil {
 			return fmt.Errorf("applying migration %s: %w", version, err)
 		}
-		database.Exec(
-			`INSERT INTO schema_migrations (version) VALUES ($1)`, version,
-		)
+		database.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version)
+		log.Printf("Applied migration: %s", version)
 	}
 	return nil
 }
