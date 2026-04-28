@@ -103,11 +103,13 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		}
 		rawStatsJSON, _ = json.Marshal(profile)
 
-		rating = &models.Rating{
-			Aim:         profile.Rating.Aim,
-			Positioning: profile.Rating.Positioning,
-			Utility:     profile.Rating.Utility,
-			Clutch:      profile.Rating.Clutch,
+		if leetifyScore >= 0 {
+			rating = &models.Rating{
+				Aim:         profile.Rating.Aim,
+				Positioning: profile.Rating.Positioning,
+				Utility:     profile.Rating.Utility,
+				Clutch:      profile.Rating.Clutch,
+			}
 		}
 
 		if leetifyScore >= 0 && steamStats != nil {
@@ -266,14 +268,17 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		}
 		rawStatsJSON, _ = json.Marshal(profile)
 
-		var finalScore float64
 		if leetifyScore >= 0 && steamStats != nil {
 			steamScore := services.ComputeSteamScore(steamStats)
-			finalScore = leetifyScore*0.90 + steamScore*0.10
-		} else {
-			finalScore = leetifyScore
+			blended := leetifyScore*0.90 + steamScore*0.10
+			skillScore = &blended
+		} else if leetifyScore >= 0 {
+			skillScore = &leetifyScore
+		} else if steamStats != nil {
+			steamScore := services.ComputeSteamScore(steamStats)
+			skillScore = &steamScore
+			privacyMode = "steam_only"
 		}
-		skillScore = &finalScore
 	} else if steamStats != nil {
 		steamScore := services.ComputeSteamScore(steamStats)
 		skillScore = &steamScore
