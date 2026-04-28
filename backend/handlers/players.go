@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -58,7 +59,10 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	profile, _ := services.FetchLeetifyProfile(steam64ID)
+	profile, leetifyErr := services.FetchLeetifyProfile(steam64ID)
+	if leetifyErr != nil {
+		log.Printf("[players] Leetify fetch failed for %s: %v", steam64ID, leetifyErr)
+	}
 
 	var (
 		skillScore    *float64

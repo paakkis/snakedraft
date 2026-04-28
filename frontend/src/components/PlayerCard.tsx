@@ -48,19 +48,20 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 export default function PlayerCard({ player, onRemove, compact = false }: Props) {
-    const hasScore = player.skill_score !== null && player.skill_score !== undefined && player.skill_score >= 0
-    const isPrivate = player.privacy_mode !== 'public'
+    const hasScore = player.skill_score != null && player.skill_score >= 0
+    // "private" means Leetify returned the profile but flagged it as private (score = -1)
+    // "unknown" means the Leetify fetch itself failed — don't show "Private" in that case
+    const isPrivate = player.privacy_mode === 'private' || (player.skill_score != null && player.skill_score < 0)
+    const noData = !hasScore && !isPrivate  // fetch failed or player not on Leetify
 
     return (
         <div className={`flex items-start gap-3 p-3 rounded-lg bg-gray-800 border border-gray-700 hover:border-gray-600 transition-colors ${compact ? 'py-2' : ''}`}>
-            {/* Avatar */}
             <img
                 src={player.avatar_url || 'https://steamcommunity-a.akamaihd.net/public/images/avatars/fe/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg'}
                 alt={player.steam_name}
                 className="w-10 h-10 rounded flex-shrink-0"
             />
 
-            {/* Info */}
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-sm truncate">{player.steam_name}</span>
@@ -69,9 +70,14 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
                             BANNED{player.ban_info?.length ? ` (${player.ban_info.map(b => b.platform).join(', ')})` : ''}
                         </span>
                     )}
-                    {isPrivate && !player.is_banned && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">
+                    {isPrivate && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400">
                             Private
+                        </span>
+                    )}
+                    {noData && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">
+                            No Leetify data
                         </span>
                     )}
                 </div>
@@ -97,7 +103,7 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
                     </div>
                 ) : (
                     <p className="text-xs text-gray-500 mt-1">
-                        {isPrivate ? 'Stats unavailable — private profile' : 'No Leetify data'}
+                        {isPrivate ? 'Stats unavailable — private Leetify profile' : 'No Leetify stats available'}
                     </p>
                 )}
             </div>
