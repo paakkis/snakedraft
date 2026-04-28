@@ -12,17 +12,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// jsonParam converts marshalled bytes to a string for JSONB columns,
+// or nil so the driver sends SQL NULL. pq sends []byte as bytea, which
+// PostgreSQL rejects for JSONB; a string is sent as text and accepted.
+func jsonParam(b []byte) interface{} {
+	if b == nil {
+		return nil
+	}
+	return string(b)
+}
+
 // POST /api/tournaments/:id/players
 // Body: { "steam_url": "https://steamcommunity.com/id/username" }
-//
-// Pipeline:
-//  1. Parse steam URL → steam64ID + vanityURL
-//  2. Check player not already in tournament (return 409 if duplicate)
-//  3. Fetch Steam summary (name, avatar) from Steam API
-//  4. Fetch Leetify profile (with 100ms delay to be polite to the API)
-//  5. Compute skill score
-//  6. Save to DB
-//  7. Return player with all stats
 func (h *Handler) AddPlayer(c *gin.Context) {
 	tournamentID := c.Param("id")
 
@@ -34,14 +35,12 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		return
 	}
 
-	// 1. Parse steam URL
 	steam64ID, vanityURL, err := h.steam.ParseSteamInput(body.SteamURL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Could not resolve Steam URL: " + err.Error()})
 		return
 	}
 
-	// 2. Check duplicate
 	var exists bool
 	h.db.QueryRow(
 		`SELECT EXISTS(SELECT 1 FROM players WHERE tournament_id=$1 AND steam64_id=$2)`,
@@ -52,19 +51,15 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		return
 	}
 
-	// 3. Fetch Steam summary
 	summary, err := h.steam.GetPlayerSummary(steam64ID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Could not fetch Steam profile: " + err.Error()})
 		return
 	}
 
-	// 4. Fetch Leetify profile (100ms delay to be polite to the API)
 	time.Sleep(100 * time.Millisecond)
 	profile, _ := services.FetchLeetifyProfile(steam64ID)
-	// Failure is non-fatal — player is saved with nil skill_score
 
-	// 5. Compute skill score and extract stats
 	var (
 		skillScore    *float64
 		isBanned      bool
@@ -94,7 +89,6 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 			pr := profile.Ranks.Premier
 			premierRating = &pr
 		}
-
 		if isBanned {
 			banInfoJSON, _ = json.Marshal(profile.Bans)
 		}
@@ -108,7 +102,6 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		}
 	}
 
-	// 6. Save to DB
 	now := time.Now()
 	var playerID string
 	err = h.db.QueryRow(`
@@ -120,14 +113,13 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		RETURNING id`,
 		tournamentID, steam64ID, vanityURL, summary.Name, summary.AvatarURL,
 		faceitElo, faceitLevel, premierRating,
-		skillScore, isBanned, banInfoJSON, privacyMode, rawStatsJSON, now,
+		skillScore, isBanned, jsonParam(banInfoJSON), privacyMode, jsonParam(rawStatsJSON), now,
 	).Scan(&playerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 7. Return player
 	player := models.Player{
 		ID:            playerID,
 		TournamentID:  tournamentID,
@@ -144,7 +136,6 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		Rating:        rating,
 		FetchedAt:     &now,
 	}
-
 	if isBanned && profile != nil {
 		for _, b := range profile.Bans {
 			player.BanInfo = append(player.BanInfo, models.BanInfo{Platform: b.Platform})
@@ -173,7 +164,6 @@ func (h *Handler) RemovePlayer(c *gin.Context) {
 }
 
 // POST /api/tournaments/:id/players/:pid/refresh
-// Re-fetches Steam + Leetify data for a player.
 func (h *Handler) RefreshPlayer(c *gin.Context) {
 	tournamentID := c.Param("id")
 	playerID := c.Param("pid")
@@ -228,7 +218,6 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 			pr := profile.Ranks.Premier
 			premierRating = &pr
 		}
-
 		if isBanned {
 			banInfoJSON, _ = json.Marshal(profile.Bans)
 		}
@@ -245,8 +234,8 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		WHERE id=$12`,
 		summary.Name, summary.AvatarURL,
 		faceitElo, faceitLevel, premierRating,
-		skillScore, isBanned, banInfoJSON,
-		privacyMode, rawStatsJSON, now,
+		skillScore, isBanned, jsonParam(banInfoJSON),
+		privacyMode, jsonParam(rawStatsJSON), now,
 		playerID,
 	)
 	if err != nil {
@@ -299,7 +288,6 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 		if banInfoRaw != nil {
 			json.Unmarshal(banInfoRaw, &p.BanInfo)
 		}
-		// Reconstruct rating from raw_stats if available
 		if rawStatsRaw != nil {
 			var lp services.LeetifyProfile
 			if json.Unmarshal(rawStatsRaw, &lp) == nil && lp.PrivacyMode == "public" {
