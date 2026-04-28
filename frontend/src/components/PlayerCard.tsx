@@ -86,7 +86,7 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
                     )}
                     {noData && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">
-                            No Leetify data
+                            No stats
                         </span>
                     )}
                 </div>

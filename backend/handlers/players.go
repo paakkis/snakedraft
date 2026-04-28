@@ -110,17 +110,20 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 			Clutch:      profile.Rating.Clutch,
 		}
 
-		// Blend: if we have a valid Leetify score and Steam stats, supplement
-		// Leetify (90%) with Steam-derived component (10%) for a richer signal.
-		// If Leetify returned private/unknown (-1), fall back to Steam only.
-		var finalScore float64
 		if leetifyScore >= 0 && steamStats != nil {
+			// Public Leetify profile + Steam stats: blend 90/10.
 			steamScore := services.ComputeSteamScore(steamStats)
-			finalScore = leetifyScore*0.90 + steamScore*0.10
-		} else {
-			finalScore = leetifyScore
+			blended := leetifyScore*0.90 + steamScore*0.10
+			skillScore = &blended
+		} else if leetifyScore >= 0 {
+			skillScore = &leetifyScore
+		} else if steamStats != nil {
+			// Private Leetify profile but Steam stats available: use Steam only.
+			steamScore := services.ComputeSteamScore(steamStats)
+			skillScore = &steamScore
+			privacyMode = "steam_only"
 		}
-		skillScore = &finalScore
+		// else: private Leetify + no Steam stats → skillScore stays nil
 	} else if steamStats != nil {
 		// No Leetify data at all — use Steam stats as sole score source.
 		steamScore := services.ComputeSteamScore(steamStats)
