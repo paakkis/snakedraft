@@ -4,6 +4,7 @@ import PlayerInput from './components/PlayerInput'
 import PlayerList from './components/PlayerList'
 import TeamBuilder from './components/TeamBuilder'
 import TeamView from './components/TeamView'
+import TournamentList from './components/TournamentList'
 
 function CreateTournamentForm() {
   const { createTournament, loading, error, clearError } = useTournamentStore()
@@ -103,11 +104,12 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-8">
         {!tournament ? (
-          <section className="max-w-xl mx-auto">
+          <section className="max-w-xl mx-auto space-y-6">
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
               <h2 className="font-semibold text-white mb-4">New Tournament</h2>
               <CreateTournamentForm />
             </div>
+            <TournamentList />
           </section>
         ) : (
           <>
