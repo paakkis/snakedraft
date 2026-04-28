@@ -65,6 +65,11 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		log.Printf("[players] Leetify fetch failed for %s: %v", steam64ID, leetifyErr)
 	}
 
+	steamStats, steamErr := h.steam.GetCS2Stats(steam64ID)
+	if steamErr != nil {
+		log.Printf("[players] Steam stats fetch failed for %s: %v", steam64ID, steamErr)
+	}
+
 	var (
 		skillScore    *float64
 		isBanned      bool
@@ -78,8 +83,7 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 	)
 
 	if profile != nil {
-		score := services.ComputeSkillScore(profile)
-		skillScore = &score
+		leetifyScore := services.ComputeSkillScore(profile)
 		isBanned = len(profile.Bans) > 0
 		privacyMode = profile.PrivacyMode
 
@@ -105,6 +109,23 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 			Utility:     profile.Rating.Utility,
 			Clutch:      profile.Rating.Clutch,
 		}
+
+		// Blend: if we have a valid Leetify score and Steam stats, supplement
+		// Leetify (90%) with Steam-derived component (10%) for a richer signal.
+		// If Leetify returned private/unknown (-1), fall back to Steam only.
+		var finalScore float64
+		if leetifyScore >= 0 && steamStats != nil {
+			steamScore := services.ComputeSteamScore(steamStats)
+			finalScore = leetifyScore*0.90 + steamScore*0.10
+		} else {
+			finalScore = leetifyScore
+		}
+		skillScore = &finalScore
+	} else if steamStats != nil {
+		// No Leetify data at all — use Steam stats as sole score source.
+		steamScore := services.ComputeSteamScore(steamStats)
+		skillScore = &steamScore
+		privacyMode = "steam_only"
 	}
 
 	now := time.Now()
@@ -193,7 +214,15 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		return
 	}
 
-	profile, _ := h.fetchLeetify(steam64ID)
+	profile, leetifyRefreshErr := h.fetchLeetify(steam64ID)
+	if leetifyRefreshErr != nil {
+		log.Printf("[players] Leetify refresh failed for %s: %v", steam64ID, leetifyRefreshErr)
+	}
+
+	steamStats, steamRefreshErr := h.steam.GetCS2Stats(steam64ID)
+	if steamRefreshErr != nil {
+		log.Printf("[players] Steam stats refresh failed for %s: %v", steam64ID, steamRefreshErr)
+	}
 
 	var (
 		skillScore    *float64
@@ -207,8 +236,7 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 	)
 
 	if profile != nil {
-		score := services.ComputeSkillScore(profile)
-		skillScore = &score
+		leetifyScore := services.ComputeSkillScore(profile)
 		isBanned = len(profile.Bans) > 0
 		privacyMode = profile.PrivacyMode
 
@@ -227,6 +255,19 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 			banInfoJSON, _ = json.Marshal(profile.Bans)
 		}
 		rawStatsJSON, _ = json.Marshal(profile)
+
+		var finalScore float64
+		if leetifyScore >= 0 && steamStats != nil {
+			steamScore := services.ComputeSteamScore(steamStats)
+			finalScore = leetifyScore*0.90 + steamScore*0.10
+		} else {
+			finalScore = leetifyScore
+		}
+		skillScore = &finalScore
+	} else if steamStats != nil {
+		steamScore := services.ComputeSteamScore(steamStats)
+		skillScore = &steamScore
+		privacyMode = "steam_only"
 	}
 
 	now := time.Now()

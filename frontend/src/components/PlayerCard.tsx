@@ -49,10 +49,11 @@ function ScoreBar({ score }: { score: number }) {
 
 export default function PlayerCard({ player, onRemove, compact = false }: Props) {
     const hasScore = player.skill_score != null && player.skill_score >= 0
+    const isSteamOnly = player.privacy_mode === 'steam_only'
     // "private" means Leetify returned the profile but flagged it as private (score = -1)
     // "unknown" means the Leetify fetch itself failed — don't show "Private" in that case
-    const isPrivate = player.privacy_mode === 'private' || (player.skill_score != null && player.skill_score < 0)
-    const noData = !hasScore && !isPrivate  // fetch failed or player not on Leetify
+    const isPrivate = !isSteamOnly && (player.privacy_mode === 'private' || (player.skill_score != null && player.skill_score < 0))
+    const noData = !hasScore && !isPrivate && !isSteamOnly  // fetch failed or player not on Leetify
 
     return (
         <div className={`flex items-start gap-3 p-3 rounded-lg bg-gray-800 border border-gray-700 hover:border-gray-600 transition-colors ${compact ? 'py-2' : ''}`}>
@@ -73,6 +74,11 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
                     {isPrivate && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900 text-yellow-400">
                             Private
+                        </span>
+                    )}
+                    {isSteamOnly && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">
+                            Steam stats
                         </span>
                     )}
                     {noData && (
@@ -103,7 +109,7 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
                     </div>
                 ) : (
                     <p className="text-xs text-gray-500 mt-1">
-                        {isPrivate ? 'Stats unavailable — private Leetify profile' : 'No Leetify stats available'}
+                        {isPrivate ? 'Stats unavailable — private Leetify profile' : 'No stats available'}
                     </p>
                 )}
             </div>

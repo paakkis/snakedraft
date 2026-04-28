@@ -48,6 +48,32 @@ func ComputeSkillScore(p *LeetifyProfile) float64 {
 	return math.Round(score*10000) / 100 // 0–100 with 2 decimal places
 }
 
+// ComputeSteamScore returns a 0–100 score derived purely from Steam lifetime
+// stats (GetUserStatsForGame). Used as a fallback when Leetify data is missing.
+//
+// Weights:
+//
+//	35% KD ratio        (0–2.5 range)
+//	25% Win rate        (0–100%)
+//	20% Headshot %      (0–60%)
+//	12% Accuracy        (0–30%)
+//	 8% MVP rate        (0–2 MVPs/match)
+func ComputeSteamScore(stats *CS2Stats) float64 {
+	kdNorm  := normalize(stats.KDRatio, 0, 2.5)
+	wrNorm  := normalize(stats.WinRate, 0, 100)
+	hsNorm  := normalize(stats.HSPercent, 0, 60)
+	accNorm := normalize(stats.Accuracy, 0, 30)
+	mvpNorm := normalize(stats.MVPRate, 0, 2)
+
+	score := kdNorm*0.35 +
+		wrNorm*0.25 +
+		hsNorm*0.20 +
+		accNorm*0.12 +
+		mvpNorm*0.08
+
+	return math.Round(score*10000) / 100
+}
+
 func normalize(value, min, max float64) float64 {
 	if max == min {
 		return 0
