@@ -60,9 +60,15 @@ function CreateTournamentForm() {
 }
 
 export default function App() {
-  const { tournament, reset } = useTournamentStore()
+  const { tournament, reset, loadTournament } = useTournamentStore()
 
-  // Persist tournament ID in URL hash for easy sharing / reload
+  // On first load, restore tournament from URL hash
+  useEffect(() => {
+    const id = window.location.hash.replace('#', '')
+    if (id) loadTournament(id)
+  }, [])
+
+  // Keep hash in sync as the active tournament changes
   useEffect(() => {
     if (tournament?.id) {
       window.location.hash = tournament.id
