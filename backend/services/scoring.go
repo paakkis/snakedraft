@@ -53,10 +53,11 @@ func ComputeSkillScore(p *LeetifyProfile) float64 {
 //
 // Weights:
 //
-//	35% KD ratio        (0–2.5 range)
-//	25% Win rate        (0–100%)
-//	20% Headshot %      (0–60%)
-//	12% Accuracy        (0–30%)
+//	30% KD ratio        (0–2.5 range)
+//	22% Win rate        (0–100%)
+//	18% Headshot %      (0–60%)
+//	12% Hours played    (0–5000h, sqrt-scaled for diminishing returns)
+//	10% Accuracy        (0–30%)
 //	 8% MVP rate        (0–2 MVPs/match)
 func ComputeSteamScore(stats *CS2Stats) float64 {
 	kdNorm  := normalize(stats.KDRatio, 0, 2.5)
@@ -64,11 +65,15 @@ func ComputeSteamScore(stats *CS2Stats) float64 {
 	hsNorm  := normalize(stats.HSPercent, 0, 60)
 	accNorm := normalize(stats.Accuracy, 0, 30)
 	mvpNorm := normalize(stats.MVPRate, 0, 2)
+	// Sqrt scaling: 100h ≈ 0.45, 500h ≈ 1.0 (already capped), gives credit for
+	// moderate hours without over-rewarding the 10,000h player vs the 3,000h player.
+	hoursNorm := normalize(math.Sqrt(stats.HoursPlayed), 0, math.Sqrt(5000))
 
-	score := kdNorm*0.35 +
-		wrNorm*0.25 +
-		hsNorm*0.20 +
-		accNorm*0.12 +
+	score := kdNorm*0.30 +
+		wrNorm*0.22 +
+		hsNorm*0.18 +
+		hoursNorm*0.12 +
+		accNorm*0.10 +
 		mvpNorm*0.08
 
 	return math.Round(score*10000) / 100

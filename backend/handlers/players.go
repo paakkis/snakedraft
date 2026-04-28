@@ -128,18 +128,24 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		privacyMode = "steam_only"
 	}
 
+	var hoursPlayed *float64
+	if steamStats != nil && steamStats.HoursPlayed > 0 {
+		h := steamStats.HoursPlayed
+		hoursPlayed = &h
+	}
+
 	now := time.Now()
 	var playerID string
 	err = h.db.QueryRow(`
 		INSERT INTO players (
 			tournament_id, steam64_id, vanity_url, steam_name, avatar_url,
 			faceit_elo, faceit_level, premier_rating,
-			skill_score, is_banned, ban_info, privacy_mode, raw_stats, fetched_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			skill_score, hours_played, is_banned, ban_info, privacy_mode, raw_stats, fetched_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING id`,
 		tournamentID, steam64ID, vanityURL, summary.Name, summary.AvatarURL,
 		faceitElo, faceitLevel, premierRating,
-		skillScore, isBanned, jsonParam(banInfoJSON), privacyMode, jsonParam(rawStatsJSON), now,
+		skillScore, hoursPlayed, isBanned, jsonParam(banInfoJSON), privacyMode, jsonParam(rawStatsJSON), now,
 	).Scan(&playerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -157,6 +163,7 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		FaceitLevel:   faceitLevel,
 		PremierRating: premierRating,
 		SkillScore:    skillScore,
+		HoursPlayed:   hoursPlayed,
 		IsBanned:      isBanned,
 		PrivacyMode:   privacyMode,
 		Rating:        rating,
@@ -270,17 +277,23 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		privacyMode = "steam_only"
 	}
 
+	var hoursPlayed *float64
+	if steamStats != nil && steamStats.HoursPlayed > 0 {
+		hp := steamStats.HoursPlayed
+		hoursPlayed = &hp
+	}
+
 	now := time.Now()
 	_, err = h.db.Exec(`
 		UPDATE players SET
 			steam_name=$1, avatar_url=$2,
 			faceit_elo=$3, faceit_level=$4, premier_rating=$5,
-			skill_score=$6, is_banned=$7, ban_info=$8,
-			privacy_mode=$9, raw_stats=$10, fetched_at=$11
-		WHERE id=$12`,
+			skill_score=$6, hours_played=$7, is_banned=$8, ban_info=$9,
+			privacy_mode=$10, raw_stats=$11, fetched_at=$12
+		WHERE id=$13`,
 		summary.Name, summary.AvatarURL,
 		faceitElo, faceitLevel, premierRating,
-		skillScore, isBanned, jsonParam(banInfoJSON),
+		skillScore, hoursPlayed, isBanned, jsonParam(banInfoJSON),
 		privacyMode, jsonParam(rawStatsJSON), now,
 		playerID,
 	)
@@ -294,6 +307,7 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		"steam_name":     summary.Name,
 		"avatar_url":     summary.AvatarURL,
 		"skill_score":    skillScore,
+		"hours_played":   hoursPlayed,
 		"is_banned":      isBanned,
 		"privacy_mode":   privacyMode,
 		"faceit_elo":     faceitElo,
@@ -307,7 +321,7 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 	rows, err := db.Query(`
 		SELECT id, tournament_id, steam64_id, vanity_url, steam_name, avatar_url,
-		       faceit_elo, faceit_level, premier_rating, skill_score,
+		       faceit_elo, faceit_level, premier_rating, skill_score, hours_played,
 		       is_banned, ban_info, privacy_mode, raw_stats, fetched_at, created_at
 		FROM players
 		WHERE tournament_id=$1
@@ -325,7 +339,7 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 		var banInfoRaw, rawStatsRaw []byte
 		err := rows.Scan(
 			&p.ID, &p.TournamentID, &p.Steam64ID, &p.VanityURL, &p.SteamName, &p.AvatarURL,
-			&p.FaceitElo, &p.FaceitLevel, &p.PremierRating, &p.SkillScore,
+			&p.FaceitElo, &p.FaceitLevel, &p.PremierRating, &p.SkillScore, &p.HoursPlayed,
 			&p.IsBanned, &banInfoRaw, &p.PrivacyMode, &rawStatsRaw, &p.FetchedAt, &p.CreatedAt,
 		)
 		if err != nil {

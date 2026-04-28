@@ -27,6 +27,7 @@ type Player struct {
 	FaceitLevel   *int        `json:"faceit_level"`
 	PremierRating *int        `json:"premier_rating"`
 	SkillScore    *float64    `json:"skill_score"`
+	HoursPlayed   *float64    `json:"hours_played"`
 	IsBanned      bool        `json:"is_banned"`
 	BanInfo       []BanInfo   `json:"ban_info"`
 	PrivacyMode   string      `json:"privacy_mode"`

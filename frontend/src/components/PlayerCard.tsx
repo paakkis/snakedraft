@@ -66,6 +66,9 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-sm truncate">{player.steam_name}</span>
+                    {compact && player.hours_played != null && (
+                        <span className="text-xs text-gray-500">{Math.round(player.hours_played).toLocaleString()}h</span>
+                    )}
                     {player.is_banned && (
                         <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-red-900 text-red-300 border border-red-700">
                             BANNED{player.ban_info?.length ? ` (${player.ban_info.map(b => b.platform).join(', ')})` : ''}
@@ -92,6 +95,11 @@ export default function PlayerCard({ player, onRemove, compact = false }: Props)
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <FaceitBadge level={player.faceit_level} elo={player.faceit_elo} />
                         <PremierBadge rating={player.premier_rating} />
+                        {player.hours_played != null && (
+                            <span className="text-xs text-gray-400">
+                                {Math.round(player.hours_played).toLocaleString()}h
+                            </span>
+                        )}
                     </div>
                 )}
 

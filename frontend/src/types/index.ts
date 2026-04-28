@@ -20,6 +20,7 @@ export interface Player {
   faceit_level?: number
   premier_rating?: number
   skill_score?: number       // null/undefined if private profile or no Leetify data
+  hours_played?: number      // CS2 hours from Steam API, null if profile is private
   is_banned: boolean
   ban_info?: BanInfo[]
   privacy_mode: string
