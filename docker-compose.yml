@@ -40,7 +40,8 @@ services:
     ports:
       - "5173:5173"
     environment:
-      VITE_API_URL: http://localhost:8080
+      # Vite proxy target — uses Docker's internal DNS to reach the backend container
+      VITE_BACKEND_URL: http://backend:8080
 
 volumes:
   pgdata:

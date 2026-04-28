@@ -1,9 +1,7 @@
 import type { Tournament, Player, Team, BalanceResult } from '../types'
 
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
-
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}/api${path}`, {
+  const res = await fetch(`/api${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
