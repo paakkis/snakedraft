@@ -3,6 +3,8 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -66,8 +68,21 @@ func FetchLeetifyProfile(steam64ID string) (*LeetifyProfile, error) {
 		return nil, fmt.Errorf("leetify API error: %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decode a partial struct just to log the privacy_mode value so we can
+	// diagnose mismatches between expected and actual field values.
+	var partial struct {
+		PrivacyMode string `json:"privacy_mode"`
+	}
+	json.Unmarshal(body, &partial)
+	log.Printf("[leetify] steam64=%s privacy_mode=%q", steam64ID, partial.PrivacyMode)
+
 	var profile LeetifyProfile
-	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
+	if err := json.Unmarshal(body, &profile); err != nil {
 		return nil, err
 	}
 	return &profile, nil
