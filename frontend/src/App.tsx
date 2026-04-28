@@ -6,17 +6,19 @@ import TeamBuilder from './components/TeamBuilder'
 import TeamView from './components/TeamView'
 
 function CreateTournamentForm() {
-  const { createTournament, loading } = useTournamentStore()
+  const { createTournament, loading, error, clearError } = useTournamentStore()
   const [name, setName] = useState('')
   const [teamSize, setTeamSize] = useState(5)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
+    clearError()
     await createTournament(name.trim(), teamSize)
   }
 
   return (
+    <div className="flex flex-col gap-3">
     <form onSubmit={handleSubmit} className="flex flex-wrap gap-3 items-end">
       <div className="flex-1 min-w-48">
         <label className="block text-xs text-gray-500 mb-1">Tournament name</label>
@@ -48,6 +50,12 @@ function CreateTournamentForm() {
         {loading ? 'Creating...' : 'Create'}
       </button>
     </form>
+    {error && (
+      <p className="text-sm text-red-400 bg-red-950 border border-red-800 rounded px-3 py-2">
+        {error}
+      </p>
+    )}
+    </div>
   )
 }
 
