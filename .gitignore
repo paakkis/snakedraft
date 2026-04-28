@@ -1,1 +1,6 @@
 .env
+backend/tmp/
+backend/vendor/
+node_modules/
+frontend/dist/
+*.local
