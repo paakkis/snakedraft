@@ -25,6 +25,8 @@ services:
       DATABASE_URL: postgres://postgres:postgres@db:5432/cs2tournament?sslmode=disable
       STEAM_API_KEY: ${STEAM_API_KEY}
       LEETIFY_API_KEY: ${LEETIFY_API_KEY}
+      # Optional: current Faceit ELO straight from Faceit (https://developers.faceit.com)
+      FACEIT_API_KEY: ${FACEIT_API_KEY:-}
       PORT: 8080
     ports:
       - "8080:8080"

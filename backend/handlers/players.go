@@ -23,6 +23,95 @@ func jsonParam(b []byte) interface{} {
 	return string(b)
 }
 
+// marshalOrNil marshals v, or returns nil for a nil pointer so the column
+// is stored as SQL NULL.
+func marshalOrNil[T any](v *T) []byte {
+	if v == nil {
+		return nil
+	}
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// playerStats is everything fetched about a player from the stat sources,
+// plus the values derived from it. Each source may be nil.
+type playerStats struct {
+	leetify *services.LeetifyProfile
+	steam   *services.CS2Stats
+	faceit  *services.FaceitPlayer
+
+	skillScore    *float64
+	privacyMode   string
+	faceitElo     *int
+	faceitLevel   *int
+	premierRating *int
+	hoursPlayed   *float64
+	isBanned      bool
+	bans          []models.BanInfo
+}
+
+// fetchPlayerStats queries Leetify, Steam and Faceit for a player. A failing
+// source is logged and skipped: the score is built from whatever answered.
+func (h *Handler) fetchPlayerStats(steam64ID string) playerStats {
+	var s playerStats
+	var err error
+
+	if s.leetify, err = h.fetchLeetify(steam64ID); err != nil {
+		log.Printf("[players] Leetify fetch failed for %s: %v", steam64ID, err)
+	}
+	if s.steam, err = h.steam.GetCS2Stats(steam64ID); err != nil {
+		log.Printf("[players] Steam stats fetch failed for %s: %v", steam64ID, err)
+	}
+	// Prefer the playtime Steam shows on the profile over in-match time
+	if total, recent, ok, err := h.steam.GetCS2Playtime(steam64ID); err != nil {
+		log.Printf("[players] Steam playtime fetch failed for %s: %v", steam64ID, err)
+	} else if ok {
+		s.hoursPlayed = &total
+		if s.steam != nil {
+			s.steam.HoursPlayed, s.steam.HoursLast2Weeks = total, recent
+		}
+	}
+	if s.faceit, err = h.faceit.GetPlayer(steam64ID); err != nil {
+		log.Printf("[players] Faceit fetch failed for %s: %v", steam64ID, err)
+	}
+
+	s.skillScore, s.privacyMode = services.CombineScores(s.leetify, s.steam, s.faceit)
+
+	if p := s.leetify; p != nil {
+		for _, b := range p.Bans {
+			s.bans = append(s.bans, models.BanInfo{Platform: b.Platform})
+		}
+		s.isBanned = len(p.Bans) > 0
+		if p.Ranks.FaceitElo != nil {
+			s.faceitElo = p.Ranks.FaceitElo
+		}
+		if p.Ranks.Faceit > 0 {
+			lvl := p.Ranks.Faceit
+			s.faceitLevel = &lvl
+		}
+		if p.Ranks.Premier > 0 {
+			pr := p.Ranks.Premier
+			s.premierRating = &pr
+		}
+	}
+	// Faceit's own numbers win over Leetify's copy of them
+	if f := s.faceit; f != nil {
+		s.faceitElo, s.faceitLevel = &f.Elo, &f.Level
+	}
+	if s.hoursPlayed == nil && s.steam != nil && s.steam.HoursPlayed > 0 {
+		s.hoursPlayed = &s.steam.HoursPlayed
+	}
+	return s
+}
+
+func (s *playerStats) banInfoJSON() []byte {
+	if len(s.bans) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(s.bans)
+	return b
+}
+
 // POST /api/tournaments/:id/players
 // Body: { "steam_url": "https://steamcommunity.com/id/username" }
 func (h *Handler) AddPlayer(c *gin.Context) {
@@ -60,84 +149,7 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	profile, leetifyErr := h.fetchLeetify(steam64ID)
-	if leetifyErr != nil {
-		log.Printf("[players] Leetify fetch failed for %s: %v", steam64ID, leetifyErr)
-	}
-
-	steamStats, steamErr := h.steam.GetCS2Stats(steam64ID)
-	if steamErr != nil {
-		log.Printf("[players] Steam stats fetch failed for %s: %v", steam64ID, steamErr)
-	}
-
-	var (
-		skillScore    *float64
-		isBanned      bool
-		privacyMode   = "unknown"
-		faceitElo     *int
-		faceitLevel   *int
-		premierRating *int
-		banInfoJSON   []byte
-		rawStatsJSON  []byte
-		rating        *models.Rating
-	)
-
-	if profile != nil {
-		leetifyScore := services.ComputeSkillScore(profile)
-		isBanned = len(profile.Bans) > 0
-		privacyMode = profile.PrivacyMode
-
-		if profile.Ranks.FaceitElo != nil {
-			faceitElo = profile.Ranks.FaceitElo
-		}
-		if profile.Ranks.Faceit > 0 {
-			lvl := profile.Ranks.Faceit
-			faceitLevel = &lvl
-		}
-		if profile.Ranks.Premier > 0 {
-			pr := profile.Ranks.Premier
-			premierRating = &pr
-		}
-		if isBanned {
-			banInfoJSON, _ = json.Marshal(profile.Bans)
-		}
-		rawStatsJSON, _ = json.Marshal(profile)
-
-		if leetifyScore >= 0 {
-			rating = &models.Rating{
-				Aim:         profile.Rating.Aim,
-				Positioning: profile.Rating.Positioning,
-				Utility:     profile.Rating.Utility,
-				Clutch:      profile.Rating.Clutch,
-			}
-		}
-
-		if leetifyScore >= 0 && steamStats != nil {
-			// Public Leetify profile + Steam stats: blend 90/10.
-			steamScore := services.ComputeSteamScore(steamStats)
-			blended := leetifyScore*0.90 + steamScore*0.10
-			skillScore = &blended
-		} else if leetifyScore >= 0 {
-			skillScore = &leetifyScore
-		} else if steamStats != nil {
-			// Private Leetify profile but Steam stats available: use Steam only.
-			steamScore := services.ComputeSteamScore(steamStats)
-			skillScore = &steamScore
-			privacyMode = "steam_only"
-		}
-		// else: private Leetify + no Steam stats → skillScore stays nil
-	} else if steamStats != nil {
-		// No Leetify data at all — use Steam stats as sole score source.
-		steamScore := services.ComputeSteamScore(steamStats)
-		skillScore = &steamScore
-		privacyMode = "steam_only"
-	}
-
-	var hoursPlayed *float64
-	if steamStats != nil && steamStats.HoursPlayed > 0 {
-		h := steamStats.HoursPlayed
-		hoursPlayed = &h
-	}
+	stats := h.fetchPlayerStats(steam64ID)
 
 	now := time.Now()
 	var playerID string
@@ -145,12 +157,15 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		INSERT INTO players (
 			tournament_id, steam64_id, vanity_url, steam_name, avatar_url,
 			faceit_elo, faceit_level, premier_rating,
-			skill_score, hours_played, is_banned, ban_info, privacy_mode, raw_stats, fetched_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			skill_score, hours_played, is_banned, ban_info, privacy_mode, raw_stats, fetched_at,
+			steam_stats, faceit_stats
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING id`,
 		tournamentID, steam64ID, vanityURL, summary.Name, summary.AvatarURL,
-		faceitElo, faceitLevel, premierRating,
-		skillScore, hoursPlayed, isBanned, jsonParam(banInfoJSON), privacyMode, jsonParam(rawStatsJSON), now,
+		stats.faceitElo, stats.faceitLevel, stats.premierRating,
+		stats.skillScore, stats.hoursPlayed, stats.isBanned, jsonParam(stats.banInfoJSON()),
+		stats.privacyMode, jsonParam(marshalOrNil(stats.leetify)), now,
+		jsonParam(marshalOrNil(stats.steam)), jsonParam(marshalOrNil(stats.faceit)),
 	).Scan(&playerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -164,21 +179,17 @@ func (h *Handler) AddPlayer(c *gin.Context) {
 		VanityURL:     vanityURL,
 		SteamName:     summary.Name,
 		AvatarURL:     summary.AvatarURL,
-		FaceitElo:     faceitElo,
-		FaceitLevel:   faceitLevel,
-		PremierRating: premierRating,
-		SkillScore:    skillScore,
-		HoursPlayed:   hoursPlayed,
-		IsBanned:      isBanned,
-		PrivacyMode:   privacyMode,
-		Rating:        rating,
+		FaceitElo:     stats.faceitElo,
+		FaceitLevel:   stats.faceitLevel,
+		PremierRating: stats.premierRating,
+		SkillScore:    stats.skillScore,
+		HoursPlayed:   stats.hoursPlayed,
+		IsBanned:      stats.isBanned,
+		BanInfo:       stats.bans,
+		PrivacyMode:   stats.privacyMode,
 		FetchedAt:     &now,
 	}
-	if isBanned && profile != nil {
-		for _, b := range profile.Bans {
-			player.BanInfo = append(player.BanInfo, models.BanInfo{Platform: b.Platform})
-		}
-	}
+	fillDetails(&player, stats.leetify, stats.steam, stats.faceit)
 
 	c.JSON(http.StatusCreated, player)
 }
@@ -226,70 +237,7 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		return
 	}
 
-	profile, leetifyRefreshErr := h.fetchLeetify(steam64ID)
-	if leetifyRefreshErr != nil {
-		log.Printf("[players] Leetify refresh failed for %s: %v", steam64ID, leetifyRefreshErr)
-	}
-
-	steamStats, steamRefreshErr := h.steam.GetCS2Stats(steam64ID)
-	if steamRefreshErr != nil {
-		log.Printf("[players] Steam stats refresh failed for %s: %v", steam64ID, steamRefreshErr)
-	}
-
-	var (
-		skillScore    *float64
-		isBanned      bool
-		privacyMode   = "unknown"
-		faceitElo     *int
-		faceitLevel   *int
-		premierRating *int
-		banInfoJSON   []byte
-		rawStatsJSON  []byte
-	)
-
-	if profile != nil {
-		leetifyScore := services.ComputeSkillScore(profile)
-		isBanned = len(profile.Bans) > 0
-		privacyMode = profile.PrivacyMode
-
-		if profile.Ranks.FaceitElo != nil {
-			faceitElo = profile.Ranks.FaceitElo
-		}
-		if profile.Ranks.Faceit > 0 {
-			lvl := profile.Ranks.Faceit
-			faceitLevel = &lvl
-		}
-		if profile.Ranks.Premier > 0 {
-			pr := profile.Ranks.Premier
-			premierRating = &pr
-		}
-		if isBanned {
-			banInfoJSON, _ = json.Marshal(profile.Bans)
-		}
-		rawStatsJSON, _ = json.Marshal(profile)
-
-		if leetifyScore >= 0 && steamStats != nil {
-			steamScore := services.ComputeSteamScore(steamStats)
-			blended := leetifyScore*0.90 + steamScore*0.10
-			skillScore = &blended
-		} else if leetifyScore >= 0 {
-			skillScore = &leetifyScore
-		} else if steamStats != nil {
-			steamScore := services.ComputeSteamScore(steamStats)
-			skillScore = &steamScore
-			privacyMode = "steam_only"
-		}
-	} else if steamStats != nil {
-		steamScore := services.ComputeSteamScore(steamStats)
-		skillScore = &steamScore
-		privacyMode = "steam_only"
-	}
-
-	var hoursPlayed *float64
-	if steamStats != nil && steamStats.HoursPlayed > 0 {
-		hp := steamStats.HoursPlayed
-		hoursPlayed = &hp
-	}
+	stats := h.fetchPlayerStats(steam64ID)
 
 	now := time.Now()
 	_, err = h.db.Exec(`
@@ -297,30 +245,40 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 			steam_name=$1, avatar_url=$2,
 			faceit_elo=$3, faceit_level=$4, premier_rating=$5,
 			skill_score=$6, hours_played=$7, is_banned=$8, ban_info=$9,
-			privacy_mode=$10, raw_stats=$11, fetched_at=$12
+			privacy_mode=$10, raw_stats=$11, fetched_at=$12,
+			steam_stats=$14, faceit_stats=$15
 		WHERE id=$13`,
 		summary.Name, summary.AvatarURL,
-		faceitElo, faceitLevel, premierRating,
-		skillScore, hoursPlayed, isBanned, jsonParam(banInfoJSON),
-		privacyMode, jsonParam(rawStatsJSON), now,
-		playerID,
+		stats.faceitElo, stats.faceitLevel, stats.premierRating,
+		stats.skillScore, stats.hoursPlayed, stats.isBanned, jsonParam(stats.banInfoJSON()),
+		stats.privacyMode, jsonParam(marshalOrNil(stats.leetify)), now,
+		playerID, jsonParam(marshalOrNil(stats.steam)), jsonParam(marshalOrNil(stats.faceit)),
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	// A changed score changes the average of the team the player is on
+	h.db.Exec(`
+		UPDATE teams t SET avg_skill_score = COALESCE((
+			SELECT AVG(p.skill_score)
+			FROM team_players tp JOIN players p ON p.id = tp.player_id
+			WHERE tp.team_id = t.id
+		), 0)
+		WHERE t.id IN (SELECT team_id FROM team_players WHERE player_id = $1)`, playerID)
+
 	c.JSON(http.StatusOK, gin.H{
 		"id":             playerID,
 		"steam_name":     summary.Name,
 		"avatar_url":     summary.AvatarURL,
-		"skill_score":    skillScore,
-		"hours_played":   hoursPlayed,
-		"is_banned":      isBanned,
-		"privacy_mode":   privacyMode,
-		"faceit_elo":     faceitElo,
-		"faceit_level":   faceitLevel,
-		"premier_rating": premierRating,
+		"skill_score":    stats.skillScore,
+		"hours_played":   stats.hoursPlayed,
+		"is_banned":      stats.isBanned,
+		"privacy_mode":   stats.privacyMode,
+		"faceit_elo":     stats.faceitElo,
+		"faceit_level":   stats.faceitLevel,
+		"premier_rating": stats.premierRating,
 		"fetched_at":     now,
 	})
 }
@@ -330,7 +288,8 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 	rows, err := db.Query(`
 		SELECT id, tournament_id, steam64_id, vanity_url, steam_name, avatar_url,
 		       faceit_elo, faceit_level, premier_rating, skill_score, hours_played,
-		       is_banned, ban_info, privacy_mode, raw_stats, fetched_at, created_at
+		       is_banned, ban_info, privacy_mode, raw_stats, fetched_at, created_at,
+		       steam_stats, faceit_stats
 		FROM players
 		WHERE tournament_id=$1
 		ORDER BY skill_score DESC NULLS LAST, created_at ASC`,
@@ -344,11 +303,12 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 	var players []models.Player
 	for rows.Next() {
 		var p models.Player
-		var banInfoRaw, rawStatsRaw []byte
+		var banInfoRaw, leetifyRaw, steamRaw, faceitRaw []byte
 		err := rows.Scan(
 			&p.ID, &p.TournamentID, &p.Steam64ID, &p.VanityURL, &p.SteamName, &p.AvatarURL,
 			&p.FaceitElo, &p.FaceitLevel, &p.PremierRating, &p.SkillScore, &p.HoursPlayed,
-			&p.IsBanned, &banInfoRaw, &p.PrivacyMode, &rawStatsRaw, &p.FetchedAt, &p.CreatedAt,
+			&p.IsBanned, &banInfoRaw, &p.PrivacyMode, &leetifyRaw, &p.FetchedAt, &p.CreatedAt,
+			&steamRaw, &faceitRaw,
 		)
 		if err != nil {
 			return nil, err
@@ -356,21 +316,71 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 		if banInfoRaw != nil {
 			json.Unmarshal(banInfoRaw, &p.BanInfo)
 		}
-		if rawStatsRaw != nil {
-			var lp services.LeetifyProfile
-			if json.Unmarshal(rawStatsRaw, &lp) == nil && lp.PrivacyMode == "public" {
-				p.Rating = &models.Rating{
-					Aim:         lp.Rating.Aim,
-					Positioning: lp.Rating.Positioning,
-					Utility:     lp.Rating.Utility,
-					Clutch:      lp.Rating.Clutch,
-				}
-			}
-		}
+		fillDetails(&p,
+			unmarshalOrNil[services.LeetifyProfile](leetifyRaw),
+			unmarshalOrNil[services.CS2Stats](steamRaw),
+			unmarshalOrNil[services.FaceitPlayer](faceitRaw),
+		)
 		players = append(players, p)
 	}
 	if players == nil {
 		players = []models.Player{}
 	}
 	return players, nil
+}
+
+func unmarshalOrNil[T any](raw []byte) *T {
+	if raw == nil {
+		return nil
+	}
+	var v T
+	if json.Unmarshal(raw, &v) != nil {
+		return nil
+	}
+	return &v
+}
+
+// fillDetails sets the display-only metadata on a player from whichever
+// sources are available (each may be nil).
+func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats *services.CS2Stats, faceit *services.FaceitPlayer) {
+	if profile != nil && profile.PrivacyMode == "public" {
+		p.Rating = &models.Rating{
+			Aim:         profile.Rating.Aim,
+			Positioning: profile.Rating.Positioning,
+			Utility:     profile.Rating.Utility,
+			Clutch:      profile.Rating.Clutch,
+		}
+		if at, ok := services.PremierRatedAt(profile); ok && p.PremierRating != nil {
+			p.PremierRatedAt = &at
+		}
+		p.Leetify = &models.LeetifyStats{
+			Rating:         profile.Ranks.Leetify,
+			Winrate:        profile.Winrate * 100,
+			TotalMatches:   profile.TotalMatches,
+			ReactionTimeMs: profile.Stats.ReactionTimeMs,
+			HeadAccuracy:   profile.Stats.AccuracyHead,
+			OpeningDuels: (profile.Stats.CtOpeningDuelSuccessPercentage +
+				profile.Stats.TOpeningDuelSuccessPercentage) / 2,
+		}
+	}
+	if steamStats != nil {
+		p.Steam = &models.SteamStats{
+			KDRatio:         steamStats.KDRatio,
+			HSPercent:       steamStats.HSPercent,
+			Accuracy:        steamStats.Accuracy,
+			WinRate:         steamStats.WinRate,
+			HoursLast2Weeks: steamStats.HoursLast2Weeks,
+		}
+	}
+	if faceit != nil {
+		p.Faceit = &models.FaceitStats{Nickname: faceit.Nickname}
+		if r := faceit.Recent; r != nil {
+			p.Faceit.RecentMatches = r.Matches
+			p.Faceit.RecentKD = r.KDRatio
+			p.Faceit.RecentADR = r.ADR
+			p.Faceit.RecentHS = r.HSPercent
+			p.Faceit.RecentWinRate = r.WinRate
+			p.Faceit.LastMatchAt = r.LastMatchAt
+		}
+	}
 }

@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// steamBaseURL is a variable so tests can point it at a fake server.
+var steamBaseURL = "https://api.steampowered.com"
+
 type SteamService struct {
 	APIKey string
 	client *http.Client
@@ -28,7 +31,7 @@ type PlayerSummary struct {
 
 func (s *SteamService) ResolveVanityURL(vanityURL string) (string, error) {
 	url := fmt.Sprintf(
-		"https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/?key=%s&vanityurl=%s",
+		steamBaseURL+"/ISteamUser/ResolveVanityURL/v1/?key=%s&vanityurl=%s",
 		s.APIKey, vanityURL,
 	)
 	resp, err := s.client.Get(url)
@@ -54,7 +57,7 @@ func (s *SteamService) ResolveVanityURL(vanityURL string) (string, error) {
 
 func (s *SteamService) GetPlayerSummary(steam64ID string) (*PlayerSummary, error) {
 	url := fmt.Sprintf(
-		"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=%s&steamids=%s",
+		steamBaseURL+"/ISteamUser/GetPlayerSummaries/v2/?key=%s&steamids=%s",
 		s.APIKey, steam64ID,
 	)
 	resp, err := s.client.Get(url)
@@ -79,13 +82,18 @@ func (s *SteamService) GetPlayerSummary(steam64ID string) (*PlayerSummary, error
 
 // CS2Stats holds derived metrics from GetUserStatsForGame for CS2 (appid=730).
 type CS2Stats struct {
-	KDRatio     float64
-	HSPercent   float64
-	Accuracy    float64
-	WinRate     float64
-	MVPRate     float64
-	TotalKills  int64
-	HoursPlayed float64
+	KDRatio    float64 `json:"kd_ratio"`
+	HSPercent  float64 `json:"hs_percent"`
+	Accuracy   float64 `json:"accuracy"`
+	WinRate    float64 `json:"win_rate"`
+	MVPRate    float64 `json:"mvp_rate"`
+	TotalKills int64   `json:"total_kills"`
+	// HoursPlayed is the playtime Steam shows on the profile when available
+	// (see GetCS2Playtime); otherwise the time spent inside matches, which is
+	// roughly half of that.
+	HoursPlayed float64 `json:"hours_played"`
+	// HoursLast2Weeks is only known when the profile playtime is.
+	HoursLast2Weeks float64 `json:"hours_last_2_weeks"`
 }
 
 // GetCS2Stats fetches lifetime stats from the Steam API for CS2 and derives
@@ -93,7 +101,7 @@ type CS2Stats struct {
 // Returns nil (not an error) when the profile is private or has no CS2 stats.
 func (s *SteamService) GetCS2Stats(steam64ID string) (*CS2Stats, error) {
 	url := fmt.Sprintf(
-		"https://api.steampowered.com/ISteamUserStats/GetUserStatsForGame/v2/?appid=730&key=%s&steamid=%s",
+		steamBaseURL+"/ISteamUserStats/GetUserStatsForGame/v2/?appid=730&key=%s&steamid=%s",
 		s.APIKey, steam64ID,
 	)
 	resp, err := s.client.Get(url)
@@ -166,6 +174,46 @@ func (s *SteamService) GetCS2Stats(steam64ID string) (*CS2Stats, error) {
 	}, nil
 }
 
+// GetCS2Playtime returns the CS2 playtime exactly as shown on the Steam
+// profile (total and last two weeks, in hours). ok is false when the
+// player's game details are private.
+//
+// This is not the same number as total_time_played in GetUserStatsForGame,
+// which only counts time spent inside matches.
+func (s *SteamService) GetCS2Playtime(steam64ID string) (total, last2Weeks float64, ok bool, err error) {
+	url := fmt.Sprintf(
+		steamBaseURL+"/IPlayerService/GetOwnedGames/v1/?key=%s&steamid=%s&include_played_free_games=1&appids_filter[0]=730",
+		s.APIKey, steam64ID,
+	)
+	resp, err := s.client.Get(url)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, 0, false, nil
+	}
+
+	var result struct {
+		Response struct {
+			Games []struct {
+				AppID           int     `json:"appid"`
+				PlaytimeForever float64 `json:"playtime_forever"` // minutes
+				Playtime2Weeks  float64 `json:"playtime_2weeks"`  // minutes
+			} `json:"games"`
+		} `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, 0, false, err
+	}
+	for _, g := range result.Response.Games {
+		if g.AppID == 730 && g.PlaytimeForever > 0 {
+			return g.PlaytimeForever / 60, g.Playtime2Weeks / 60, true, nil
+		}
+	}
+	return 0, 0, false, nil
+}
+
 // ParseSteamInput handles three input formats:
 //
 //	https://steamcommunity.com/id/vanityname     → resolve vanity URL
@@ -177,6 +225,9 @@ func (s *SteamService) ParseSteamInput(input string) (steam64ID string, vanityUR
 	if strings.Contains(input, "/profiles/") {
 		parts := strings.Split(input, "/profiles/")
 		steam64ID = strings.Trim(parts[len(parts)-1], "/")
+		if !isSteam64ID(steam64ID) {
+			return "", "", fmt.Errorf("%q is not a Steam64 ID — custom profile names use /id/ instead of /profiles/", steam64ID)
+		}
 		return steam64ID, "", nil
 	}
 
@@ -187,10 +238,22 @@ func (s *SteamService) ParseSteamInput(input string) (steam64ID string, vanityUR
 		return steam64ID, vanityURL, err
 	}
 
-	// Assume raw Steam64 ID (17-digit number)
-	if len(input) > 10 {
+	if isSteam64ID(input) {
 		return input, "", nil
 	}
 
 	return "", "", fmt.Errorf("could not parse steam input: %s", input)
+}
+
+// isSteam64ID reports whether s looks like a 17-digit Steam64 ID.
+func isSteam64ID(s string) bool {
+	if len(s) != 17 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

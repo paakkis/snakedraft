@@ -8,16 +8,18 @@ import (
 )
 
 type Handler struct {
-	db    *sql.DB
-	cfg   config.Config
-	steam *services.SteamService
+	db     *sql.DB
+	cfg    config.Config
+	steam  *services.SteamService
+	faceit *services.FaceitService
 }
 
 func New(db *sql.DB, cfg config.Config) *Handler {
 	return &Handler{
-		db:    db,
-		cfg:   cfg,
-		steam: services.NewSteamService(cfg.SteamAPIKey),
+		db:     db,
+		cfg:    cfg,
+		steam:  services.NewSteamService(cfg.SteamAPIKey),
+		faceit: services.NewFaceitService(cfg.FaceitAPIKey),
 	}
 }
 

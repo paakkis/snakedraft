@@ -6,6 +6,7 @@ type Config struct {
 	DatabaseURL   string
 	SteamAPIKey   string
 	LeetifyAPIKey string
+	FaceitAPIKey  string
 	Port          string
 }
 
@@ -14,6 +15,7 @@ func Load() Config {
 		DatabaseURL:   os.Getenv("DATABASE_URL"),
 		SteamAPIKey:   os.Getenv("STEAM_API_KEY"),
 		LeetifyAPIKey: os.Getenv("LEETIFY_API_KEY"),
+		FaceitAPIKey:  os.Getenv("FACEIT_API_KEY"),
 		Port:          getEnvOrDefault("PORT", "8080"),
 	}
 }
