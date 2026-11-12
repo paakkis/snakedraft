@@ -13,27 +13,27 @@ import (
 )
 
 // POST /api/tournaments/:id/balance
-// Body: { "team_size": 5 }
+// Body: { "team_size": 5, "max_spread": 2.0 }   (both optional)
 //
 // Pipeline:
-//  1. Load all players with a skill_score
-//  2. Determine teamCount = floor(playerCount / teamSize), bench remainder
-//  3. Run SnakeDraft → OptimizeTeams(10000 iterations)
-//  4. Delete existing teams for this tournament
-//  5. Persist new teams + team_players rows
-//  6. Return full team assignments + variance metric
+//  1. Load all players with a skill_score, and the teammate requests
+//  2. services.BalanceWithRequests: bench the remainder, snake draft +
+//     optimise, honour teammate requests as far as fairness allows
+//  3. Replace the tournament's teams in one transaction
+//  4. Return team assignments, balance metrics and the fate of each request
 func (h *Handler) BalanceTeams(c *gin.Context) {
 	tournamentID := c.Param("id")
 
 	var body struct {
-		TeamSize int `json:"team_size"`
+		TeamSize  int     `json:"team_size"`
+		MaxSpread float64 `json:"max_spread"`
 	}
 	c.ShouldBindJSON(&body)
-	if body.TeamSize == 0 {
+	if body.TeamSize <= 0 {
 		// Fall back to tournament's configured team_size
 		h.db.QueryRow(`SELECT team_size FROM tournaments WHERE id=$1`, tournamentID).Scan(&body.TeamSize)
 	}
-	if body.TeamSize == 0 {
+	if body.TeamSize <= 0 {
 		body.TeamSize = 5
 	}
 
@@ -53,34 +53,46 @@ func (h *Handler) BalanceTeams(c *gin.Context) {
 	var players []services.PlayerScore
 	for rows.Next() {
 		var p services.PlayerScore
-		rows.Scan(&p.PlayerID, &p.SkillScore)
+		if err := rows.Scan(&p.PlayerID, &p.SkillScore); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		players = append(players, p)
 	}
 
-	teamCount := len(players) / body.TeamSize
-	if teamCount < 2 {
+	requests, err := loadRequests(h.db, tournamentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	links := make([]services.TeammateRequest, len(requests))
+	for i, r := range requests {
+		links[i] = services.TeammateRequest{ID: r.ID, RequesterID: r.RequesterID, RequestedID: r.RequestedID}
+	}
+
+	// 2. Draft
+	result, err := services.BalanceWithRequests(players, links, body.TeamSize, services.BalanceOptions{
+		MaxSpread: body.MaxSpread,
+	})
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Not enough players with skill scores to form at least 2 teams"})
 		return
 	}
 
-	// Bench lowest-ranked players that don't fill a full team
-	activePlayers := players[:teamCount*body.TeamSize]
-	benchPlayers := players[teamCount*body.TeamSize:]
-
-	// 2+3. Snake draft + greedy optimization
-	drafted := services.SnakeDraft(activePlayers, teamCount)
-	optimized := services.OptimizeTeams(drafted, 10000)
-	variance := services.TeamVariance(optimized)
-
-	// 4. Delete existing teams (cascades to team_players)
-	if _, err := h.db.Exec(`DELETE FROM teams WHERE tournament_id=$1`, tournamentID); err != nil {
+	// 3. Replace teams atomically, so a failure can't leave half a draft behind
+	tx, err := h.db.Begin()
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	defer tx.Rollback()
 
-	// 5. Persist new teams
-	var resultTeams []models.Team
-	for i, teamPlayers := range optimized {
+	// Deleting teams cascades to team_players
+	if _, err := tx.Exec(`DELETE FROM teams WHERE tournament_id=$1`, tournamentID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for i, teamPlayers := range result.Teams {
 		avgScore := 0.0
 		for _, p := range teamPlayers {
 			avgScore += p.SkillScore
@@ -88,7 +100,7 @@ func (h *Handler) BalanceTeams(c *gin.Context) {
 		avgScore /= float64(len(teamPlayers))
 
 		var teamID string
-		err := h.db.QueryRow(`
+		err := tx.QueryRow(`
 			INSERT INTO teams (tournament_id, name, avg_skill_score)
 			VALUES ($1,$2,$3) RETURNING id`,
 			tournamentID, fmt.Sprintf("Team %d", i+1), avgScore,
@@ -97,63 +109,47 @@ func (h *Handler) BalanceTeams(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
 		for _, p := range teamPlayers {
-			h.db.Exec(
+			if _, err := tx.Exec(
 				`INSERT INTO team_players (team_id, player_id) VALUES ($1,$2)`,
 				teamID, p.PlayerID,
-			)
-		}
-
-		// Load full player objects for the response
-		playerRows, _ := h.db.Query(`
-			SELECT p.id, p.steam64_id, p.steam_name, p.avatar_url, p.skill_score,
-			       p.is_banned, p.ban_info, p.privacy_mode, p.faceit_elo, p.faceit_level, p.premier_rating
-			FROM team_players tp
-			JOIN players p ON p.id = tp.player_id
-			WHERE tp.team_id=$1`, teamID)
-
-		team := models.Team{
-			ID:            teamID,
-			TournamentID:  tournamentID,
-			Name:          fmt.Sprintf("Team %d", i+1),
-			AvgSkillScore: avgScore,
-		}
-		if playerRows != nil {
-			defer playerRows.Close()
-			for playerRows.Next() {
-				var p models.Player
-				var banInfoRaw []byte
-				playerRows.Scan(
-					&p.ID, &p.Steam64ID, &p.SteamName, &p.AvatarURL, &p.SkillScore,
-					&p.IsBanned, &banInfoRaw, &p.PrivacyMode,
-					&p.FaceitElo, &p.FaceitLevel, &p.PremierRating,
-				)
-				if banInfoRaw != nil {
-					json.Unmarshal(banInfoRaw, &p.BanInfo)
-				}
-				team.Players = append(team.Players, p)
+			); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
 			}
 		}
-		if team.Players == nil {
-			team.Players = []models.Player{}
-		}
-		resultTeams = append(resultTeams, team)
+	}
+	if _, err := tx.Exec(`UPDATE tournaments SET status='balanced', updated_at=now() WHERE id=$1`, tournamentID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
-	// Update tournament status
-	h.db.Exec(`UPDATE tournaments SET status='balanced', updated_at=now() WHERE id=$1`, tournamentID)
+	// 4. Respond
+	resultTeams, err := loadTeams(h.db, tournamentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	// Build bench player IDs for response
-	benchIDs := make([]string, len(benchPlayers))
-	for i, b := range benchPlayers {
+	benchIDs := make([]string, len(result.Bench))
+	for i, b := range result.Bench {
 		benchIDs[i] = b.PlayerID
+	}
+	for i, o := range result.Requests {
+		requests[i].Status = string(o.Status)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"variance":      variance,
-		"teams":         resultTeams,
-		"bench_players": benchIDs,
+		"variance":        result.Variance,
+		"spread":          result.Spread,
+		"baseline_spread": result.BaselineSpread,
+		"teams":           resultTeams,
+		"bench_players":   benchIDs,
+		"requests":        requests,
 	})
 }
 
@@ -203,7 +199,7 @@ func (h *Handler) MovePlayer(c *gin.Context) {
 func loadTeams(db *sql.DB, tournamentID string) ([]models.Team, error) {
 	rows, err := db.Query(`
 		SELECT id, tournament_id, name, avg_skill_score, created_at
-		FROM teams WHERE tournament_id=$1 ORDER BY name`,
+		FROM teams WHERE tournament_id=$1 ORDER BY length(name), name`,
 		tournamentID,
 	)
 	if err != nil {
@@ -217,19 +213,18 @@ func loadTeams(db *sql.DB, tournamentID string) ([]models.Team, error) {
 		rows.Scan(&t.ID, &t.TournamentID, &t.Name, &t.AvgSkillScore, &t.CreatedAt)
 
 		playerRows, _ := db.Query(`
-			SELECT p.id, p.steam64_id, p.steam_name, p.avatar_url, p.skill_score,
+			SELECT p.id, p.steam64_id, p.steam_name, p.avatar_url, p.skill_score, p.hours_played,
 			       p.is_banned, p.ban_info, p.privacy_mode, p.faceit_elo, p.faceit_level, p.premier_rating
 			FROM team_players tp
 			JOIN players p ON p.id = tp.player_id
 			WHERE tp.team_id=$1
 			ORDER BY p.skill_score DESC NULLS LAST`, t.ID)
 		if playerRows != nil {
-			defer playerRows.Close()
 			for playerRows.Next() {
 				var p models.Player
 				var banInfoRaw []byte
 				playerRows.Scan(
-					&p.ID, &p.Steam64ID, &p.SteamName, &p.AvatarURL, &p.SkillScore,
+					&p.ID, &p.Steam64ID, &p.SteamName, &p.AvatarURL, &p.SkillScore, &p.HoursPlayed,
 					&p.IsBanned, &banInfoRaw, &p.PrivacyMode,
 					&p.FaceitElo, &p.FaceitLevel, &p.PremierRating,
 				)
@@ -238,6 +233,7 @@ func loadTeams(db *sql.DB, tournamentID string) ([]models.Team, error) {
 				}
 				t.Players = append(t.Players, p)
 			}
+			playerRows.Close()
 		}
 		if t.Players == nil {
 			t.Players = []models.Player{}

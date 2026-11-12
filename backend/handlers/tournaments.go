@@ -35,6 +35,7 @@ func (h *Handler) CreateTournament(c *gin.Context) {
 
 	t.Players = []models.Player{}
 	t.Teams = []models.Team{}
+	t.Requests = []models.TeammateRequest{}
 	c.JSON(http.StatusCreated, t)
 }
 
@@ -55,6 +56,7 @@ func (h *Handler) ListTournaments(c *gin.Context) {
 		rows.Scan(&t.ID, &t.Name, &t.TeamSize, &t.Status, &t.CreatedAt, &t.UpdatedAt)
 		t.Players = []models.Player{}
 		t.Teams = []models.Team{}
+		t.Requests = []models.TeammateRequest{}
 		tournaments = append(tournaments, t)
 	}
 	c.JSON(http.StatusOK, tournaments)
@@ -86,6 +88,13 @@ func (h *Handler) GetTournament(c *gin.Context) {
 		return
 	}
 	t.Teams = teams
+
+	requests, err := loadRequests(h.db, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	t.Requests = requests
 
 	c.JSON(http.StatusOK, t)
 }

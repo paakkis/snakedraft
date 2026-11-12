@@ -20,6 +20,9 @@ type PlayerScore struct {
 //	Round 2 (R→L): T4←P5,  T3←P6,  T2←P7,  T1←P8
 //	Round 3 (L→R): T1←P9,  T2←P10, ...
 func SnakeDraft(players []PlayerScore, teamCount int) [][]PlayerScore {
+	if teamCount <= 0 {
+		return [][]PlayerScore{}
+	}
 	sorted := make([]PlayerScore, len(players))
 	copy(sorted, players)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -50,6 +53,9 @@ func SnakeDraft(players []PlayerScore, teamCount int) [][]PlayerScore {
 // 10,000 iterations runs in < 10ms for 40 players across 8 teams.
 func OptimizeTeams(teams [][]PlayerScore, iterations int) [][]PlayerScore {
 	best := deepCopy(teams)
+	if len(best) < 2 {
+		return best
+	}
 	bestVar := TeamVariance(best)
 
 	for i := 0; i < iterations; i++ {
@@ -75,6 +81,9 @@ func OptimizeTeams(teams [][]PlayerScore, iterations int) [][]PlayerScore {
 // TeamVariance returns the variance of average skill scores across teams.
 // Lower is better — 0 means perfectly balanced teams.
 func TeamVariance(teams [][]PlayerScore) float64 {
+	if len(teams) == 0 {
+		return 0
+	}
 	avgs := make([]float64, len(teams))
 	for i, team := range teams {
 		sum := 0.0
