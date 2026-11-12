@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react'
 import { useTournamentStore } from './store/tournament'
 import PlayerInput from './components/PlayerInput'
 import PlayerList from './components/PlayerList'
+import TeammateRequests from './components/TeammateRequests'
 import TeamBuilder from './components/TeamBuilder'
 import TeamView from './components/TeamView'
 import TournamentList from './components/TournamentList'
+import CopyButton from './components/CopyButton'
 
 function CreateTournamentForm() {
   const { createTournament, loading, error, clearError } = useTournamentStore()
@@ -20,42 +22,29 @@ function CreateTournamentForm() {
 
   return (
     <div className="flex flex-col gap-3">
-      <form onSubmit={handleSubmit} className="flex flex-wrap gap-3 items-end">
-        <div className="flex-1 min-w-48">
-          <label className="block text-xs text-gray-500 mb-1">Tournament name</label>
+      <form onSubmit={handleSubmit} className="flex flex-wrap gap-2 items-end">
+        <label className="flex-1 min-w-48">
+          <span className="block text-xs text-zinc-500 mb-1">Name</span>
           <input
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Friday Night Cup"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+            className="field w-full"
+            autoFocus
           />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Team size</label>
-          <select
-            value={teamSize}
-            onChange={e => setTeamSize(Number(e.target.value))}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-          >
-            {[2, 3, 4, 5, 6].map(n => (
-              <option key={n} value={n}>{n}v{n}</option>
-            ))}
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500 mb-1">Format</span>
+          <select value={teamSize} onChange={e => setTeamSize(Number(e.target.value))} className="field">
+            {[2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n}v{n}</option>)}
           </select>
-        </div>
-        <button
-          type="submit"
-          disabled={loading || !name.trim()}
-          className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg text-sm transition-colors"
-        >
-          {loading ? 'Creating...' : 'Create'}
+        </label>
+        <button type="submit" disabled={loading || !name.trim()} className="btn-primary">
+          {loading ? 'Creating…' : 'Create'}
         </button>
       </form>
-      {error && (
-        <p className="text-sm text-red-400 bg-red-950 border border-red-800 rounded px-3 py-2">
-          {error}
-        </p>
-      )}
+      {error && <p className="notice-error">{error}</p>}
     </div>
   )
 }
@@ -71,71 +60,52 @@ export default function App() {
 
   // Keep hash in sync as the active tournament changes
   useEffect(() => {
-    if (tournament?.id) {
-      window.location.hash = tournament.id
-    }
+    if (tournament?.id) window.location.hash = tournament.id
   }, [tournament?.id])
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      <header className="border-b border-gray-800 bg-gray-900">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🎮</span>
-            <div>
-              <h1 className="text-lg font-bold text-white leading-tight">CS2 Tournament Balancer</h1>
-              {tournament && (
-                <p className="text-xs text-gray-500">
-                  {tournament.name} &middot; {tournament.team_size}v{tournament.team_size}
-                </p>
-              )}
+    <div className="min-h-screen">
+      {tournament && (
+        <header className="border-b border-zinc-800 bg-zinc-900">
+          <div className="max-w-[90rem] mx-auto px-4 h-12 flex items-center justify-between gap-4">
+            <span className="font-semibold text-zinc-100 truncate">
+              {tournament.name}
+              <span className="ml-2 text-sm font-normal text-zinc-400">
+                {tournament.team_size}v{tournament.team_size}
+              </span>
+            </span>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <CopyButton text={() => window.location.href} className="btn-quiet" title="Copy a link to this tournament">
+                Copy link
+              </CopyButton>
+              <button onClick={() => { window.location.hash = ''; reset() }} className="btn-quiet">
+                All tournaments
+              </button>
             </div>
           </div>
-          {tournament && (
-            <button
-              onClick={() => { window.location.hash = ''; reset() }}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              &larr; New tournament
-            </button>
-          )}
-        </div>
-      </header>
+        </header>
+      )}
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-8">
+      <main className="max-w-[90rem] mx-auto px-4 py-5">
         {!tournament ? (
-          <section className="max-w-xl mx-auto space-y-6">
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-              <h2 className="font-semibold text-white mb-4">New Tournament</h2>
+          <div className="max-w-xl mx-auto space-y-4">
+            <div className="panel p-4">
+              <h2 className="panel-title mb-3">New tournament</h2>
               <CreateTournamentForm />
             </div>
             <TournamentList />
-          </section>
+          </div>
         ) : (
-          <>
-            <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Add Player
-              </h2>
+          <div className="space-y-4">
+            <div className="panel p-3">
+              <h2 className="panel-title mb-2">Add players</h2>
               <PlayerInput />
-            </section>
-
-            <section>
-              <PlayerList />
-            </section>
-
-            {tournament.players.length >= 2 && (
-              <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <TeamBuilder />
-              </section>
-            )}
-
-            {tournament.teams.length > 0 && (
-              <section>
-                <TeamView />
-              </section>
-            )}
-          </>
+            </div>
+            <PlayerList />
+            {tournament.players.length >= 2 && <TeammateRequests />}
+            {tournament.players.length >= 2 && <TeamBuilder />}
+            <TeamView />
+          </div>
         )}
       </main>
     </div>

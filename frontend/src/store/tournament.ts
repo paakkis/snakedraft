@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Tournament, Team } from '../types'
+import type { Tournament, Team, RequestStatus } from '../types'
 import * as api from '../api/client'
 
 interface TournamentStore {
@@ -8,10 +8,17 @@ interface TournamentStore {
   addingPlayer: boolean
   error: string | null
   benchPlayerIds: string[]
+  requestError: string | null
+  // Outcome of each teammate request in the latest balance run, by request id
+  requestStatuses: Record<string, RequestStatus>
 
+  addTeammateRequest: (requesterId: string, requestedId: string) => Promise<boolean>
+  removeTeammateRequest: (requestId: string) => Promise<void>
   createTournament: (name: string, teamSize: number) => Promise<void>
   loadTournament: (id: string) => Promise<void>
-  addPlayer: (steamUrl: string) => Promise<void>
+  refreshingIds: string[]
+  addPlayer: (steamUrl: string) => Promise<boolean>
+  refreshPlayers: (playerIds: string[]) => Promise<void>
   removePlayer: (playerId: string) => Promise<void>
   balanceTeams: () => Promise<void>
   movePlayer: (playerId: string, fromTeamId: string, toTeamId: string) => Promise<void>
@@ -25,16 +32,22 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
   addingPlayer: false,
   error: null,
   benchPlayerIds: [],
+  requestError: null,
+  requestStatuses: {},
+  refreshingIds: [],
 
   clearError: () => set({ error: null }),
 
-  reset: () => set({ tournament: null, loading: false, addingPlayer: false, error: null, benchPlayerIds: [] }),
+  reset: () => set({
+    tournament: null, loading: false, addingPlayer: false, error: null,
+    benchPlayerIds: [], requestError: null, requestStatuses: {},
+  }),
 
   createTournament: async (name, teamSize) => {
     set({ loading: true, error: null })
     try {
       const tournament = await api.createTournament(name, teamSize)
-      set({ tournament: { ...tournament, players: [], teams: [] } })
+      set({ tournament: { ...tournament, players: [], teams: [], teammate_requests: [] } })
     } catch (e) {
       set({ error: (e as Error).message })
     } finally {
@@ -46,7 +59,12 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const tournament = await api.getTournament(id)
-      set({ tournament })
+      set({
+        tournament: { ...tournament, teammate_requests: tournament.teammate_requests ?? [] },
+        benchPlayerIds: [],
+        requestError: null,
+        requestStatuses: {},
+      })
     } catch (e) {
       set({ error: (e as Error).message })
     } finally {
@@ -67,10 +85,38 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
           ),
         },
       }))
+      return true
     } catch (e) {
       set({ error: (e as Error).message })
+      return false
     } finally {
       set({ addingPlayer: false })
+    }
+  },
+
+  // Re-fetches stats one player at a time (to stay inside API rate limits),
+  // then reloads the tournament so scores, details and team averages agree.
+  refreshPlayers: async (playerIds) => {
+    const { tournament } = get()
+    if (!tournament) return
+    set({ error: null, refreshingIds: playerIds })
+    const failed: string[] = []
+    for (const id of playerIds) {
+      try {
+        await api.refreshPlayer(tournament.id, id)
+      } catch {
+        failed.push(tournament.players.find(p => p.id === id)?.steam_name ?? id)
+      }
+      set(s => ({ refreshingIds: s.refreshingIds.filter(x => x !== id) }))
+    }
+    try {
+      const fresh = await api.getTournament(tournament.id)
+      set({ tournament: { ...fresh, teammate_requests: fresh.teammate_requests ?? [] } })
+    } catch (e) {
+      set({ error: (e as Error).message })
+    }
+    if (failed.length > 0) {
+      set({ error: `Could not refresh: ${failed.join(', ')}` })
     }
   },
 
@@ -83,10 +129,50 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
         tournament: {
           ...s.tournament!,
           players: s.tournament!.players.filter(p => p.id !== playerId),
+          // The server deletes a removed player's requests along with them
+          teammate_requests: s.tournament!.teammate_requests.filter(
+            r => r.requester_id !== playerId && r.requested_id !== playerId,
+          ),
         },
       }))
     } catch (e) {
       set({ error: (e as Error).message })
+    }
+  },
+
+  addTeammateRequest: async (requesterId, requestedId) => {
+    const { tournament } = get()
+    if (!tournament) return false
+    set({ requestError: null })
+    try {
+      const request = await api.addTeammateRequest(tournament.id, requesterId, requestedId)
+      set(s => ({
+        tournament: {
+          ...s.tournament!,
+          teammate_requests: [...s.tournament!.teammate_requests, request],
+        },
+      }))
+      return true
+    } catch (e) {
+      set({ requestError: (e as Error).message })
+      return false
+    }
+  },
+
+  removeTeammateRequest: async (requestId) => {
+    const { tournament } = get()
+    if (!tournament) return
+    set({ requestError: null })
+    try {
+      await api.removeTeammateRequest(tournament.id, requestId)
+      set(s => ({
+        tournament: {
+          ...s.tournament!,
+          teammate_requests: s.tournament!.teammate_requests.filter(r => r.id !== requestId),
+        },
+      }))
+    } catch (e) {
+      set({ requestError: (e as Error).message })
     }
   },
 
@@ -103,6 +189,9 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
           status: 'balanced',
         },
         benchPlayerIds: result.bench_players ?? [],
+        requestStatuses: Object.fromEntries(
+          (result.requests ?? []).flatMap(r => (r.status ? [[r.id, r.status]] : [])),
+        ),
       }))
     } catch (e) {
       set({ error: (e as Error).message })

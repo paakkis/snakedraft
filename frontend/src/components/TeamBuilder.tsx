@@ -1,18 +1,29 @@
 import { useState } from 'react'
 import { useTournamentStore } from '../store/tournament'
+import { teamSpread, teamVariance } from '../lib/stats'
 
-function VarianceBadge({ variance }: { variance: number }) {
-  const label = variance < 1 ? 'Excellent' : variance < 5 ? 'Good' : 'Poor'
-  const color = variance < 1
-    ? 'bg-green-900 text-green-300 border-green-700'
-    : variance < 5
-    ? 'bg-yellow-900 text-yellow-300 border-yellow-700'
-    : 'bg-red-900 text-red-300 border-red-700'
+/** Balance metrics, always computed from the teams as they currently are. */
+export function BalanceMetrics() {
+  const teams = useTournamentStore(s => s.tournament?.teams ?? [])
+  if (teams.length === 0) return null
+
+  const variance = teamVariance(teams)
+  const spread = teamSpread(teams)
+  const verdict = variance < 1 ? 'Excellent' : variance < 5 ? 'Good' : 'Poor'
+  const color = variance < 1 ? 'text-emerald-400' : variance < 5 ? 'text-amber-400' : 'text-red-400'
 
   return (
-    <span className={`text-xs font-semibold px-2 py-1 rounded border ${color}`}>
-      {label} (σ²={variance.toFixed(2)})
-    </span>
+    <div className="flex items-baseline gap-4 text-sm tabular-nums">
+      <span className={`font-semibold ${color}`}>{verdict} balance</span>
+      <span title="Variance of the team average scores — 0 means perfectly even teams">
+        <span className="text-zinc-500">σ² </span>
+        <span className="text-zinc-100 font-medium">{variance.toFixed(2)}</span>
+      </span>
+      <span title="Gap between the strongest and the weakest team average">
+        <span className="text-zinc-500">spread </span>
+        <span className="text-zinc-100 font-medium">{spread.toFixed(2)}</span>
+      </span>
+    </div>
   )
 }
 
@@ -22,74 +33,44 @@ export default function TeamBuilder() {
 
   if (!tournament) return null
 
-  const scoredPlayers = tournament.players.filter(
-    p => p.skill_score !== null && p.skill_score !== undefined && p.skill_score >= 0,
-  )
+  const scored = tournament.players.filter(p => p.skill_score != null && p.skill_score >= 0).length
+  const size = tournament.team_size
+  const teamsPossible = Math.floor(scored / size)
+  const benched = scored - teamsPossible * size
   const teamsExist = tournament.teams.length > 0
-  const canBalance = scoredPlayers.length >= tournament.team_size * 2
+  const canBalance = teamsPossible >= 2
 
-  const handleBalance = async () => {
-    if (teamsExist && !confirmRebalance) {
-      setConfirmRebalance(true)
-      return
-    }
+  const run = async () => {
     setConfirmRebalance(false)
     await balanceTeams()
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="text-sm text-gray-400">
-          {scoredPlayers.length} players with scores
-          {' · '}team size {tournament.team_size}
-          {' · '}
-          {scoredPlayers.length >= tournament.team_size * 2
-            ? `${Math.floor(scoredPlayers.length / tournament.team_size)} teams possible`
-            : 'need more players'}
-        </div>
-        {tournament.variance !== undefined && (
-          <VarianceBadge variance={tournament.variance} />
+    <div className="panel px-3 py-2.5 flex items-center justify-between gap-4 flex-wrap">
+      <div className="text-sm text-zinc-400">
+        {canBalance ? (
+          <>
+            <span className="text-zinc-100 font-medium">{teamsPossible} teams</span> of {size} from {scored} scored players
+            {benched > 0 && <span className="text-amber-400"> · {benched} lowest on the bench</span>}
+          </>
+        ) : (
+          <>Need at least {size * 2} players with a score to draft ({scored} so far)</>
         )}
       </div>
 
-      {confirmRebalance && (
-        <div className="bg-yellow-950 border border-yellow-700 rounded-lg px-4 py-3 text-sm text-yellow-300">
-          Manual moves will be lost. Re-balance anyway?
-          <div className="flex gap-2 mt-2">
-            <button
-              onClick={handleBalance}
-              className="px-3 py-1 bg-yellow-700 hover:bg-yellow-600 text-white rounded text-xs font-semibold"
-            >
-              Yes, re-balance
-            </button>
-            <button
-              onClick={() => setConfirmRebalance(false)}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-xs"
-            >
-              Cancel
-            </button>
-          </div>
+      {confirmRebalance ? (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-amber-400">This replaces the current teams, including manual moves.</span>
+          <button onClick={run} className="btn-primary">Re-draft</button>
+          <button onClick={() => setConfirmRebalance(false)} className="btn">Cancel</button>
         </div>
-      )}
-
-      {!confirmRebalance && (
+      ) : (
         <button
-          onClick={handleBalance}
+          onClick={() => (teamsExist ? setConfirmRebalance(true) : run())}
           disabled={loading || !canBalance}
-          className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 disabled:text-gray-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+          className="btn-primary"
         >
-          {loading ? (
-            <>
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-              </svg>
-              Balancing...
-            </>
-          ) : (
-            <>⚡ {teamsExist ? 'Re-generate' : 'Generate'} Balanced Teams</>
-          )}
+          {loading ? 'Drafting…' : teamsExist ? 'Re-draft teams' : 'Draft balanced teams'}
         </button>
       )}
     </div>
