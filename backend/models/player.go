@@ -70,7 +70,7 @@ type Player struct {
 	FetchedAt      *time.Time    `json:"fetched_at"`
 	CreatedAt      time.Time     `json:"created_at"`
 
-	// internal — not serialized directly, used for DB roundtrip
+	// internal - not serialized directly, used for DB roundtrip
 	BanInfoRaw  json.RawMessage `json:"-"`
 	RawStatsRaw json.RawMessage `json:"-"`
 }

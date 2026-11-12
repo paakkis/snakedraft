@@ -48,7 +48,7 @@ function StaleRank({ platform, lastPlayed, unknownNote }: {
     if (days < STALE_RANK_DAYS) return null
     const months = Math.round(days / 30.44)
     const age = months >= 24 ? `${Math.floor(months / 12)} years` : `${months} months`
-    title = `${age} old — last rated ${platform} match was on ${new Date(lastPlayed).toLocaleDateString()}. This rank may not reflect current skill.`
+    title = `Last rated ${platform} match ${age} ago (${new Date(lastPlayed).toLocaleDateString()})`
   } else if (unknownNote) {
     title = unknownNote
   } else {
@@ -66,37 +66,34 @@ function source(p: Player): { label: string; className: string; title: string } 
     return {
       label: p.faceit ? 'Leetify + Faceit' : 'Leetify',
       className: 'text-emerald-400',
-      title: 'Score: rank (Faceit and/or Premier) 55%, Leetify aim, positioning, utility, opening duels and recent form 45%'
-        + (p.faceit ? ' — Faceit ELO read live from Faceit' : '')
-        + (p.steam ? ' — Steam lifetime stats count for only 5%' : ''),
+      title: 'Rank (Faceit or Premier) and Leetify stats' + (p.steam ? ', 5% Steam lifetime stats' : ''),
     }
   }
   if (p.privacy_mode === 'faceit_only') {
     return {
       label: 'Faceit',
       className: 'text-orange-400',
-      title: 'No public Leetify profile — score uses Faceit ELO (75%) and recent Faceit form (25%)'
-        + (p.steam ? ', with Steam lifetime stats counting for 10%' : ''),
+      title: 'Faceit ELO and recent Faceit matches' + (p.steam ? ', 10% Steam lifetime stats' : ''),
     }
   }
   if (p.privacy_mode === 'steam_only') {
     return {
       label: 'Steam only',
       className: 'text-sky-400',
-      title: 'Not on Faceit and no public Leetify profile — score uses Steam lifetime stats only, which says little about current form',
+      title: 'Steam lifetime stats only. Less reliable.',
     }
   }
   if (!hasScore && p.privacy_mode === 'private') {
     return {
       label: 'Private',
       className: 'text-amber-400',
-      title: 'Leetify profile is private and Steam game details are hidden — cannot be drafted',
+      title: 'Profile is private. Cannot be drafted.',
     }
   }
   return {
     label: 'No stats',
     className: 'text-red-400',
-    title: 'Not on Leetify or Faceit, and Steam game details are private or empty — cannot be drafted',
+    title: 'No stats found. Cannot be drafted.',
   }
 }
 
@@ -166,7 +163,7 @@ export default function PlayerList() {
             <CopyButton
               text={() => players.map(p => p.steam64_id).join('\n')}
               className="btn-quiet"
-              title="Copy every Steam64 ID, one per line"
+              title="Copy all Steam64 IDs"
             >
               Copy all IDs
             </CopyButton>
@@ -174,9 +171,9 @@ export default function PlayerList() {
               onClick={() => refreshPlayers(players.map(p => p.id))}
               disabled={refreshing}
               className="btn-quiet disabled:opacity-50"
-              title="Re-fetch stats for every player"
+              title="Refresh all players"
             >
-              {refreshing ? `Refreshing… ${refreshingIds.length} left` : 'Refresh all stats'}
+              {refreshing ? `Refreshing, ${refreshingIds.length} left` : 'Refresh all'}
             </button>
           </div>
         )}
@@ -190,7 +187,7 @@ export default function PlayerList() {
       )}
 
       {players.length === 0 ? (
-        <p className="text-zinc-500 text-sm py-10 text-center">No players yet — add Steam profiles above.</p>
+        <p className="text-zinc-500 text-sm py-10 text-center">No players yet.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm tabular-nums">
@@ -262,7 +259,7 @@ export default function PlayerList() {
                               >
                                 {num(p.faceit_elo)}
                               </a>
-                            : <span className="text-zinc-100" title="From Leetify — may be out of date">{num(p.faceit_elo)}</span>
+                            : <span className="text-zinc-100" title="From Leetify, may be outdated">{num(p.faceit_elo)}</span>
                           : num(undefined)}
                         <span className="w-5 flex justify-center">
                           {p.faceit_level ? <FaceitLevel level={p.faceit_level} /> : null}
@@ -272,7 +269,7 @@ export default function PlayerList() {
                             <StaleRank
                               platform="Faceit"
                               lastPlayed={p.faceit.last_match_at}
-                              unknownNote="Faceit has no recent CS2 matches for this player — this rank is probably old"
+                              unknownNote="No recent Faceit CS2 matches. Rank is probably old."
                             />
                           )}
                         </span>
@@ -289,7 +286,7 @@ export default function PlayerList() {
                     <td className="px-2 py-1.5 text-right whitespace-nowrap">
                       {p.rating
                         ? <span title={p.leetify
-                            ? `Leetify rating ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · head accuracy ${p.leetify.head_accuracy.toFixed(0)}% · opening duels ${p.leetify.opening_duels.toFixed(0)}%`
+                            ? `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · opening duels ${p.leetify.opening_duels.toFixed(0)}%`
                             : undefined}>
                             {p.rating.aim.toFixed(0)} / {p.rating.positioning.toFixed(0)} / {p.rating.utility.toFixed(0)}
                           </span>
@@ -297,29 +294,29 @@ export default function PlayerList() {
                     </td>
                     <td
                       className="px-2 py-1.5 text-right"
-                      title={p.leetify ? `${p.leetify.total_matches.toLocaleString()} matches on Leetify` : undefined}
+                      title={p.leetify ? `${p.leetify.total_matches.toLocaleString()} matches` : undefined}
                     >
                       {num(winrate)}
                     </td>
                     <td
                       className="px-2 py-1.5 text-right"
                       title={p.faceit?.recent_matches
-                        ? `Last ${p.faceit.recent_matches} Faceit matches · ADR ${p.faceit.recent_adr.toFixed(0)} · headshots ${p.faceit.recent_hs.toFixed(0)}% · won ${p.faceit.recent_win_rate.toFixed(0)}%`
-                          + (p.faceit.last_match_at ? ` · last played ${new Date(p.faceit.last_match_at).toLocaleDateString()}` : '')
+                        ? `Last ${p.faceit.recent_matches} Faceit matches · ADR ${p.faceit.recent_adr.toFixed(0)} · HS ${p.faceit.recent_hs.toFixed(0)}% · won ${p.faceit.recent_win_rate.toFixed(0)}%`
+                          + (p.faceit.last_match_at ? ` · last ${new Date(p.faceit.last_match_at).toLocaleDateString()}` : '')
                         : undefined}
                     >
                       {num(p.faceit?.recent_matches ? p.faceit.recent_kd : undefined, 2)}
                     </td>
                     <td
                       className="px-2 py-1.5 text-right text-zinc-500"
-                      title={p.steam ? `Headshots ${p.steam.hs_percent.toFixed(0)}% · accuracy ${p.steam.accuracy.toFixed(0)}% (Steam lifetime)` : undefined}
+                      title={p.steam ? `Steam lifetime · HS ${p.steam.hs_percent.toFixed(0)}% · accuracy ${p.steam.accuracy.toFixed(0)}%` : undefined}
                     >
                       {num(p.steam?.kd_ratio, 2)}
                     </td>
                     <td
                       className="px-2 py-1.5 text-right"
                       title={p.steam && p.hours_played != null
-                        ? `${p.steam.hours_last_2_weeks.toFixed(1)} h in the last 2 weeks`
+                        ? `${p.steam.hours_last_2_weeks.toFixed(1)} h last 2 weeks`
                         : undefined}
                     >
                       {num(p.hours_played)}
@@ -333,7 +330,7 @@ export default function PlayerList() {
                         onClick={() => refreshPlayers([p.id])}
                         disabled={refreshing}
                         className="btn-quiet disabled:opacity-40"
-                        title={`Re-fetch stats (updated ${timeAgo(p.fetched_at)})`}
+                        title={`Updated ${timeAgo(p.fetched_at)}`}
                       >
                         {busy ? '…' : 'Refresh'}
                       </button>

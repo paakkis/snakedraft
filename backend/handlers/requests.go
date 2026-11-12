@@ -64,15 +64,14 @@ func (h *Handler) CreateTeammateRequest(c *gin.Context) {
 	for i, r := range existing {
 		if (r.RequesterID == body.RequesterID && r.RequestedID == body.RequestedID) ||
 			(r.RequesterID == body.RequestedID && r.RequestedID == body.RequesterID) {
-			c.JSON(http.StatusConflict, gin.H{"error": "These players are already linked by a teammate request"})
+			c.JSON(http.StatusConflict, gin.H{"error": "These players already have a request"})
 			return
 		}
 		links[i] = services.TeammateRequest{ID: r.ID, RequesterID: r.RequesterID, RequestedID: r.RequestedID}
 	}
 	if services.WouldFormFullTeam(links, body.RequesterID, body.RequestedID, teamSize) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf(
-			"This request would chain %d or more friends together and fill a whole team. "+
-				"A group of friends can have at most %d players.", teamSize, teamSize-1)})
+			"A friend group can have at most %d players", teamSize-1)})
 		return
 	}
 

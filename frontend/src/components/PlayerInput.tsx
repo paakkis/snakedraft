@@ -52,7 +52,7 @@ export default function PlayerInput() {
       const skipped = found.length - fresh.length
 
       if (found.length === 0) {
-        setImportNote({ text: `No Steam profile links or Steam64 IDs found in ${file.name}.`, error: true })
+        setImportNote({ text: `No Steam profiles found in ${file.name}.`, error: true })
         return
       }
       setText(prev => [...prev.split(/[\s,]+/).filter(Boolean), ...fresh].join('\n'))
@@ -60,7 +60,6 @@ export default function PlayerInput() {
         text: [
           `${file.name}: ${fresh.length} new player${fresh.length === 1 ? '' : 's'}`
             + (skipped ? `, ${skipped} already added` : '') + '.',
-          fresh.length > 0 ? 'Check the list and press Add.' : '',
           ...warnings,
         ].filter(Boolean).join(' '),
         error: warnings.length > 0,

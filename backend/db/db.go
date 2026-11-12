@@ -31,7 +31,7 @@ func Connect(url string) (*sql.DB, error) {
 			return database, nil
 		}
 		wait := time.Duration(attempt) * 500 * time.Millisecond
-		log.Printf("DB not ready (attempt %d/10): %v — retrying in %s", attempt, err, wait)
+		log.Printf("DB not ready (attempt %d/10): %v, retrying in %s", attempt, err, wait)
 		time.Sleep(wait)
 	}
 	return nil, fmt.Errorf("could not connect to database after 10 attempts: %w", err)

@@ -22,7 +22,7 @@ type LeetifyProfile struct {
 		Leetify   float64 `json:"leetify"`
 		Premier   int     `json:"premier"`
 		Faceit    int     `json:"faceit"`
-		FaceitElo *int    `json:"faceit_elo"` // nullable — pointer required
+		FaceitElo *int    `json:"faceit_elo"` // nullable - pointer required
 	} `json:"ranks"`
 	Rating struct {
 		Aim         float64 `json:"aim"`
@@ -98,7 +98,7 @@ func PremierRatedAt(p *LeetifyProfile) (at time.Time, ok bool) {
 var leetifyBaseURL = "https://api-public.cs-prod.leetify.com"
 
 func FetchLeetifyProfile(steam64ID, apiKey string) (*LeetifyProfile, error) {
-	// Leetify public API v3 — https://api-public-docs.cs-prod.leetify.com
+	// Leetify public API v3 - https://api-public-docs.cs-prod.leetify.com
 	// (the old api.cs-prod.leetify.com/api/profile/id/… route now 404s for everyone).
 	url := fmt.Sprintf("%s/v3/profile?steam64_id=%s", leetifyBaseURL, steam64ID)
 

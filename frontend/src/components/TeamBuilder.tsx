@@ -15,11 +15,11 @@ export function BalanceMetrics() {
   return (
     <div className="flex items-baseline gap-4 text-sm tabular-nums">
       <span className={`font-semibold ${color}`}>{verdict} balance</span>
-      <span title="Variance of the team average scores — 0 means perfectly even teams">
+      <span title="Variance of team averages. 0 is perfectly even.">
         <span className="text-zinc-500">σ² </span>
         <span className="text-zinc-100 font-medium">{variance.toFixed(2)}</span>
       </span>
-      <span title="Gap between the strongest and the weakest team average">
+      <span title="Strongest minus weakest team average">
         <span className="text-zinc-500">spread </span>
         <span className="text-zinc-100 font-medium">{spread.toFixed(2)}</span>
       </span>
@@ -51,16 +51,16 @@ export default function TeamBuilder() {
         {canBalance ? (
           <>
             <span className="text-zinc-100 font-medium">{teamsPossible} teams</span> of {size} from {scored} scored players
-            {benched > 0 && <span className="text-amber-400"> · {benched} lowest on the bench</span>}
+            {benched > 0 && <span className="text-amber-400"> · {benched} benched</span>}
           </>
         ) : (
-          <>Need at least {size * 2} players with a score to draft ({scored} so far)</>
+          <>Need {size * 2} scored players, have {scored}</>
         )}
       </div>
 
       {confirmRebalance ? (
         <div className="flex items-center gap-2 text-sm">
-          <span className="text-amber-400">This replaces the current teams, including manual moves.</span>
+          <span className="text-amber-400">Replaces current teams and manual moves.</span>
           <button onClick={run} className="btn-primary">Re-draft</button>
           <button onClick={() => setConfirmRebalance(false)} className="btn">Cancel</button>
         </div>

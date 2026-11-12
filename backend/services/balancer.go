@@ -79,7 +79,7 @@ func OptimizeTeams(teams [][]PlayerScore, iterations int) [][]PlayerScore {
 }
 
 // TeamVariance returns the variance of average skill scores across teams.
-// Lower is better — 0 means perfectly balanced teams.
+// Lower is better - 0 means perfectly balanced teams.
 func TeamVariance(teams [][]PlayerScore) float64 {
 	if len(teams) == 0 {
 		return 0

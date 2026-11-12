@@ -39,7 +39,7 @@ export function extractSteamInputs(text: string): ImportResult {
 
   const warnings: string[] = []
   if (ROUNDED_STEAM64.test(text)) {
-    warnings.push('Some Steam IDs are stored as numbers and Excel has rounded them. Format that column as text, or use profile URLs.')
+    warnings.push('Excel rounded some numeric Steam IDs. Format the column as text or use profile URLs.')
   }
   return { inputs, warnings }
 }
@@ -48,7 +48,7 @@ export function extractSteamInputs(text: string): ImportResult {
 export async function readPlayerFile(file: File): Promise<ImportResult> {
   const name = file.name.toLowerCase()
   if (name.endsWith('.xls')) {
-    throw new Error('Old .xls files are not supported. Save the sheet as .xlsx or .csv.')
+    throw new Error('.xls is not supported. Save as .xlsx or .csv.')
   }
   const bytes = new Uint8Array(await file.arrayBuffer())
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b // "PK": xlsx is a zip of XML files
@@ -67,7 +67,7 @@ async function xlsxText(zip: Uint8Array): Promise<string> {
   // End-of-central-directory record: scan backwards for its signature
   let eocd = zip.length - 22
   while (eocd >= 0 && view.getUint32(eocd, true) !== 0x06054b50) eocd--
-  if (eocd < 0) throw new Error('This file is not a valid .xlsx workbook.')
+  if (eocd < 0) throw new Error('Not a valid .xlsx file.')
 
   const entries = view.getUint16(eocd + 10, true)
   let pos = view.getUint32(eocd + 16, true)

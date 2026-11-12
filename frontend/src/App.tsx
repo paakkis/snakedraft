@@ -75,7 +75,7 @@ export default function App() {
               </span>
             </span>
             <div className="flex items-center gap-1 flex-shrink-0">
-              <CopyButton text={() => window.location.href} className="btn-quiet" title="Copy a link to this tournament">
+              <CopyButton text={() => window.location.href} className="btn-quiet" title="Copy tournament link">
                 Copy link
               </CopyButton>
               <button onClick={() => { window.location.hash = ''; reset() }} className="btn-quiet">

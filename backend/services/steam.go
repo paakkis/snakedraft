@@ -110,7 +110,7 @@ func (s *SteamService) GetCS2Stats(steam64ID string) (*CS2Stats, error) {
 	}
 	defer resp.Body.Close()
 
-	// 403 = private profile, 400/404 = no CS2 stats — not an error we surface
+	// 403 = private profile, 400/404 = no CS2 stats - not an error we surface
 	if resp.StatusCode != 200 {
 		return nil, nil
 	}
@@ -226,7 +226,7 @@ func (s *SteamService) ParseSteamInput(input string) (steam64ID string, vanityUR
 		parts := strings.Split(input, "/profiles/")
 		steam64ID = strings.Trim(parts[len(parts)-1], "/")
 		if !isSteam64ID(steam64ID) {
-			return "", "", fmt.Errorf("%q is not a Steam64 ID — custom profile names use /id/ instead of /profiles/", steam64ID)
+			return "", "", fmt.Errorf("%q is not a Steam64 ID. Use /id/ for custom profile names", steam64ID)
 		}
 		return steam64ID, "", nil
 	}

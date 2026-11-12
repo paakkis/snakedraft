@@ -6,22 +6,22 @@ const STATUS: Record<RequestStatus, { label: string; className: string; title: s
   honored: {
     label: 'Together',
     className: 'text-emerald-400',
-    title: 'These players are on the same team',
+    title: 'On the same team',
   },
   dropped_for_balance: {
     label: 'Split',
     className: 'text-amber-400',
-    title: 'These players are on different teams — keeping them together would have made the teams unfair',
+    title: 'On different teams',
   },
   illegal_chain: {
     label: 'Chain too long',
     className: 'text-red-400',
-    title: 'This request would chain a full team of friends together',
+    title: 'Would link a full team of friends',
   },
   player_unavailable: {
     label: 'Not drafted',
     className: 'text-zinc-500',
-    title: 'One of these players is not on a team (benched or no skill score)',
+    title: 'One of them is not on a team',
   },
 }
 
@@ -70,7 +70,7 @@ export default function TeammateRequests() {
           )}
         </h2>
         <span className="text-xs text-zinc-500">
-          Kept when teams stay fair · a friend group can have at most {maxGroup} players
+          Kept if teams stay fair · max {maxGroup} friends per team
         </span>
       </div>
 

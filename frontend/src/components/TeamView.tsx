@@ -25,7 +25,7 @@ function PlayerRow({ player, linked }: { player: Player; linked: boolean }) {
         : <div className="w-5 h-5 rounded-sm bg-zinc-700 flex-shrink-0" />}
       <span className="flex-1 min-w-0 truncate text-zinc-100">{player.steam_name}</span>
       {linked && (
-        <span className="text-[10px] text-emerald-400" title="On this team with a requested teammate">
+        <span className="text-[10px] text-emerald-400" title="Playing with a requested teammate">
           friend
         </span>
       )}
@@ -74,7 +74,7 @@ function TeamColumn({ team, mean, teamSize, linkedIds }: {
           <span className="text-zinc-100 font-medium">{team.avg_skill_score.toFixed(1)}</span>
           <span
             className={`ml-1.5 text-xs ${Math.abs(diff) < 0.05 ? 'text-zinc-600' : diff > 0 ? 'text-emerald-400' : 'text-red-400'}`}
-            title="Difference from the average of all teams"
+            title="Difference from the all-team average"
           >
             {diff >= 0 ? '+' : '−'}{Math.abs(diff).toFixed(1)}
           </span>
@@ -88,7 +88,7 @@ function TeamColumn({ team, mean, teamSize, linkedIds }: {
       </div>
       {wrongSize && (
         <p className="px-3 pb-2 text-xs text-amber-400">
-          {team.players.length} players — should be {teamSize}
+          {team.players.length} players, should be {teamSize}
         </p>
       )}
     </div>
@@ -136,8 +136,8 @@ export default function TeamView() {
           <BalanceMetrics />
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500">Drag players between teams — balance updates live</span>
-          <CopyButton text={() => teamsAsText(teams)} className="btn" title="Copy the teams as plain text, e.g. for Discord">
+          <span className="text-xs text-zinc-500">Drag players to move them</span>
+          <CopyButton text={() => teamsAsText(teams)} className="btn" title="Copy teams as text">
             Copy teams
           </CopyButton>
         </div>

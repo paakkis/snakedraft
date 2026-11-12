@@ -12,7 +12,7 @@ import (
 const DefaultMaxSpread = 2.0
 
 // ErrNotEnoughPlayers is returned when fewer than two full teams can be formed.
-var ErrNotEnoughPlayers = errors.New("not enough players with skill scores to form at least 2 teams")
+var ErrNotEnoughPlayers = errors.New("need at least 2 full teams of scored players")
 
 // TeammateRequest is a wish from one player to be on the same team as another.
 // For drafting purposes the link is undirected.

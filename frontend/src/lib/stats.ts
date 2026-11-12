@@ -2,7 +2,7 @@ import type { Team } from '../types'
 
 const averages = (teams: Team[]) => teams.map(t => t.avg_skill_score)
 
-/** Variance of team averages — same metric the backend optimises. */
+/** Variance of team averages - same metric the backend optimises. */
 export function teamVariance(teams: Team[]): number {
   const avgs = averages(teams)
   if (avgs.length === 0) return 0

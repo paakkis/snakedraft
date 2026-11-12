@@ -75,7 +75,7 @@ func (h *Handler) BalanceTeams(c *gin.Context) {
 		MaxSpread: body.MaxSpread,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Not enough players with skill scores to form at least 2 teams"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Need at least 2 full teams of scored players"})
 		return
 	}
 
