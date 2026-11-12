@@ -99,10 +99,19 @@ function source(p: Player): { label: string; className: string; title: string } 
 
 function ScoreCell({ score }: { score?: number }) {
   if (score == null || score < 0) return <span className="text-zinc-700">–</span>
+  const pct = Math.min(Math.max(score, 1), 100)
   return (
     <div className="flex items-center justify-end gap-2">
       <div className="w-14 h-1 bg-zinc-800 rounded-sm overflow-hidden">
-        <div className="h-full bg-amber-500" style={{ width: `${Math.min(score, 100)}%` }} />
+        {/* The gradient spans the whole track, so the fill shows red for low scores up to green for high ones */}
+        <div
+          className="h-full"
+          style={{
+            width: `${pct}%`,
+            backgroundImage: 'linear-gradient(90deg, #ef4444 15%, #f59e0b 45%, #22c55e 80%)',
+            backgroundSize: `${10000 / pct}% 100%`,
+          }}
+        />
       </div>
       <span className="font-semibold text-zinc-50 w-9 text-right">{score.toFixed(1)}</span>
     </div>
@@ -137,8 +146,10 @@ export default function PlayerList() {
     if (key === sortKey) setAscending(a => !a)
     else { setSortKey(key); setAscending(key === 'name') }
   }
-  const Th = ({ k, children, align = 'right' }: { k?: SortKey; children: React.ReactNode; align?: 'left' | 'right' }) => (
-    <th className={`px-2 py-2 font-medium whitespace-nowrap ${align === 'right' ? 'text-right' : 'text-left'}`}>
+  const Th = ({ k, children, align = 'right', pad = '' }: {
+    k?: SortKey; children: React.ReactNode; align?: 'left' | 'right'; pad?: string
+  }) => (
+    <th className={`px-2 py-2 font-medium whitespace-nowrap ${align === 'right' ? 'text-right' : 'text-left'} ${pad}`}>
       {k ? (
         <button onClick={() => sortBy(k)} className={`hover:text-zinc-100 ${sortKey === k ? 'text-zinc-100' : ''}`}>
           {children}{sortKey === k ? (ascending ? ' ↑' : ' ↓') : ''}
@@ -196,8 +207,9 @@ export default function PlayerList() {
                 <Th align="left">#</Th>
                 <Th k="name" align="left">Player</Th>
                 <Th align="left">Steam64 ID</Th>
-                <Th k="faceit">Faceit</Th>
-                <Th k="premier">Premier</Th>
+                {/* Right padding matches the badge and warning slots, so headers sit over the numbers */}
+                <Th k="faceit" pad="!pr-[3.375rem]">Faceit</Th>
+                <Th k="premier" pad="!pr-[1.75rem]">Premier</Th>
                 <Th>Aim / Pos / Util</Th>
                 <Th k="winrate">Win %</Th>
                 <Th k="recentKd">Recent K/D</Th>
