@@ -23,6 +23,9 @@ type FaceitPlayer struct {
 	Nickname string `json:"nickname"`
 	Elo      int    `json:"elo"`
 	Level    int    `json:"level"`
+	// LifetimeMatches is how many CS2 matches the ELO was earned over;
+	// 0 when unknown.
+	LifetimeMatches int `json:"lifetime_matches,omitempty"`
 	// Recent is nil when the player has no recent CS2 matches on Faceit.
 	Recent *FaceitRecent `json:"recent,omitempty"`
 }
@@ -79,11 +82,39 @@ func (s *FaceitService) GetPlayer(steam64ID string) (*FaceitPlayer, error) {
 		Level:    cs2.SkillLevel,
 	}
 
-	// Recent form is a bonus: the ELO is still useful if this call fails.
+	// Both of these are a bonus: the ELO is still useful if a call fails.
+	if n, err := s.lifetimeMatches(profile.PlayerID); err == nil {
+		player.LifetimeMatches = n
+	}
 	if recent, err := s.recentStats(profile.PlayerID); err == nil {
 		player.Recent = recent
 	}
 	return player, nil
+}
+
+// lifetimeMatches returns how many CS2 matches a player has on Faceit.
+func (s *FaceitService) lifetimeMatches(playerID string) (int, error) {
+	var result struct {
+		Lifetime map[string]any `json:"lifetime"`
+	}
+	found, err := s.get("/players/"+url.PathEscape(playerID)+"/stats/cs2", &result)
+	if err != nil || !found {
+		return 0, err
+	}
+	return int(faceitNum(result.Lifetime, "Matches")), nil
+}
+
+// faceitNum reads a stat that Faceit sends either as a string ("Kills": "17")
+// or as a number.
+func faceitNum(stats map[string]any, key string) float64 {
+	switch v := stats[key].(type) {
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	case float64:
+		return v
+	}
+	return 0
 }
 
 func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, error) {
@@ -98,17 +129,7 @@ func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, error) {
 		return nil, err
 	}
 
-	// Faceit sends most numbers as strings ("Kills": "17") and some as numbers.
-	num := func(stats map[string]any, key string) float64 {
-		switch v := stats[key].(type) {
-		case string:
-			f, _ := strconv.ParseFloat(v, 64)
-			return f
-		case float64:
-			return v
-		}
-		return 0
-	}
+	num := faceitNum
 
 	recent := &FaceitRecent{Matches: len(result.Items)}
 	var kills, deaths, headshots, adrSum, wins, latest float64

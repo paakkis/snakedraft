@@ -53,7 +53,7 @@ func TestFetchLeetifyProfile(t *testing.T) {
 	if len(p.RecentMatches) != 1 || p.RecentMatches[0].DataSource != "faceit" {
 		t.Errorf("recent matches not decoded: %+v", p.RecentMatches)
 	}
-	if score := ComputeSkillScore(p); score < 30 || score > 70 {
+	if score := ComputeSkillScore(p, nil); score < 30 || score > 70 {
 		t.Errorf("unexpected score for a Faceit level 10 profile: %v", score)
 	}
 

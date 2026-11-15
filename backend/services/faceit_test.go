@@ -31,6 +31,8 @@ func TestFaceitGetPlayer(t *testing.T) {
 				"csgo":{"skill_level":10,"faceit_elo":2480}}}`))
 		case r.URL.Path == "/players" && r.URL.Query().Get("game_player_id") == "csgo-only":
 			w.Write([]byte(`{"player_id":"old","nickname":"Old","games":{"csgo":{"skill_level":5,"faceit_elo":1100}}}`))
+		case r.URL.Path == "/players/abc/stats/cs2":
+			w.Write([]byte(`{"lifetime":{"Matches":"1829","Total Matches":"356","Wins":"940"}}`))
 		case strings.HasPrefix(r.URL.Path, "/players/abc/games/cs2/stats"):
 			// Real responses mix string and numeric values.
 			w.Write([]byte(`{"items":[
@@ -48,6 +50,9 @@ func TestFaceitGetPlayer(t *testing.T) {
 	}
 	if p.Nickname != "Nick" || p.Elo != 2314 || p.Level != 10 {
 		t.Errorf("wrong player (must use the cs2 entry, not csgo): %+v", p)
+	}
+	if p.LifetimeMatches != 1829 {
+		t.Errorf("wrong lifetime match count: %d", p.LifetimeMatches)
 	}
 	r := p.Recent
 	if r == nil {
