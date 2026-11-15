@@ -164,13 +164,15 @@ func TestComputeSkillScore_UnsettledRankCountsLess(t *testing.T) {
 
 	settled := ComputeSkillScore(p, &FaceitPlayer{Elo: 1000, LifetimeMatches: 2000})
 	fresh := ComputeSkillScore(p, &FaceitPlayer{Elo: 1000, LifetimeMatches: 5})
-	if fresh <= settled+10 {
+	if fresh <= settled+5 {
 		t.Errorf("a 5-match rank must weigh much less than a settled one: fresh=%v settled=%v", fresh, settled)
 	}
 
-	// Hand-computed for the fresh account: rank 1/3 at weight 0.55·0.2 = 0.11,
-	// aim and positioning 0.8 at weight 0.25 → (0.11/3 + 0.2) / 0.36.
-	want := (0.11/3 + 0.2) / 0.36 * 100
+	// Hand-computed for the fresh account. The rank (1/3) is raised towards
+	// the mechanics (0.8): 1/3 + 0.5·(0.8 − 1/3 − 0.05) = 0.54167. It gets
+	// weight 0.55·0.2 = 0.11, aim and positioning 0.8 at weight 0.25.
+	rank := 1.0/3 + 0.5*(0.8-1.0/3-0.05)
+	want := (0.11*rank + 0.2) / 0.36 * 100
 	if math.Abs(fresh-want) > 0.01 {
 		t.Errorf("fresh account: got %v, want %v", fresh, want)
 	}
@@ -184,5 +186,69 @@ func TestComputeFaceitScore_UnsettledElo(t *testing.T) {
 	f := &FaceitPlayer{Elo: 1500, LifetimeMatches: 5, Recent: &FaceitRecent{Matches: 5, KDRatio: 1.4, ADR: 100}}
 	if got := ComputeFaceitScore(f); math.Abs(got-81.25) > 0.01 {
 		t.Errorf("got %v, want 81.25", got)
+	}
+}
+
+func TestAssessRank_MechanicsAboveRank(t *testing.T) {
+	fixClock(t, testNow)
+	profile := func(premier int, aim, positioning float64) *LeetifyProfile {
+		p := &LeetifyProfile{PrivacyMode: "public"}
+		p.Ranks.Premier = premier
+		p.Rating.Aim, p.Rating.Positioning = aim, positioning
+		return p
+	}
+
+	// Rank 0.4, mechanics 0.8: raised by half of the gap beyond the tolerance.
+	a := AssessRank(profile(14000, 80, 80), nil)
+	if !near(a.Listed, 0.4) || !near(a.Mechanics, 0.8) || !near(a.Value, 0.4+0.5*0.35) || !a.Underrated {
+		t.Errorf("mechanics far above rank: got %+v", a)
+	}
+
+	// Aim counts for more than positioning (0.15 vs 0.10): (90·0.15 + 40·0.10) / 0.25 = 70.
+	if a := AssessRank(profile(14000, 90, 40), nil); !near(a.Mechanics, 0.7) {
+		t.Errorf("weighted mechanics: got %v, want 0.7", a.Mechanics)
+	}
+
+	// A gap between the tolerance and the flag: nudged, but not flagged.
+	a = AssessRank(profile(14000, 48, 48), nil)
+	if !near(a.Value, 0.4+0.5*0.03) || a.Underrated {
+		t.Errorf("small gap: got %+v", a)
+	}
+
+	// Within the tolerance, and mechanics below the rank: the rank stands.
+	for _, m := range []float64{44, 40, 20} {
+		if a := AssessRank(profile(14000, m, m), nil); !near(a.Value, 0.4) || a.Underrated {
+			t.Errorf("mechanics %v: rank must stand, got %+v", m, a)
+		}
+	}
+
+	// No ratings from Leetify: nothing to compare against.
+	if a := AssessRank(profile(14000, 0, 0), nil); !near(a.Value, 0.4) || a.Mechanics != 0 || a.Underrated {
+		t.Errorf("no mechanics: got %+v", a)
+	}
+
+	// The correction never pushes the rank past the top of the scale.
+	if a := AssessRank(profile(34000, 100, 100), nil); a.Value > 1 {
+		t.Errorf("rank above 1: %+v", a)
+	}
+
+	// The comparison is against the best listed rank, whichever platform it is from.
+	a = AssessRank(profile(14000, 80, 80), &FaceitPlayer{Elo: 2400})
+	if a.Source != RankSourceFaceit || !near(a.Value, 0.8) || a.Underrated {
+		t.Errorf("Faceit rank matching the mechanics: got %+v", a)
+	}
+}
+
+func TestComputeSkillScore_UnderratedPlayerScoresHigher(t *testing.T) {
+	fixClock(t, testNow)
+
+	// Hand-computed: rank 0.4 raised to 0.575 at weight 0.55, mechanics 0.8
+	// at weight 0.25 → (0.31625 + 0.2) / 0.8 = 64.53. Without the correction
+	// it would be (0.22 + 0.2) / 0.8 = 52.5.
+	p := &LeetifyProfile{PrivacyMode: "public"}
+	p.Ranks.Premier = 14000
+	p.Rating.Aim, p.Rating.Positioning = 80, 80
+	if got := ComputeSkillScore(p, nil); math.Abs(got-64.53) > 0.01 {
+		t.Errorf("got %v, want 64.53", got)
 	}
 }

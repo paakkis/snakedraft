@@ -2,6 +2,13 @@ package services
 
 import "math"
 
+// Weights of the skill score components that are referred to elsewhere.
+const (
+	weightRank        = 0.55
+	weightAim         = 0.15
+	weightPositioning = 0.10
+)
+
 // ComputeSkillScore returns a 0–100 normalized skill score for a player.
 // Returns -1 if the profile is private or holds no usable stats.
 //
@@ -17,7 +24,9 @@ import "math"
 //
 // The rank weight is multiplied by the rank's confidence (see AssessRank), so
 // a rank earned over a handful of matches, or one not played for in a long
-// time, counts for less and the measured stats count for more.
+// time, counts for less and the measured stats count for more. A rank that
+// sits well below the player's aim and positioning is raised part of the way
+// towards them.
 //
 // A player is never penalised for not being active on a platform: a missing
 // source is left out instead of counted as zero, and its weight is spread
@@ -38,11 +47,11 @@ func ComputeSkillScore(p *LeetifyProfile, faceit *FaceitPlayer) float64 {
 	}
 
 	rank := AssessRank(p, faceit)
-	add(rank.Value, 0.55*rank.Confidence, rank.Value > 0)
+	add(rank.Value, weightRank*rank.Confidence, rank.Value > 0)
 
 	// Leetify reports 0 for ratings it has no data for.
-	add(p.Rating.Aim/100, 0.15, p.Rating.Aim > 0)
-	add(p.Rating.Positioning/100, 0.10, p.Rating.Positioning > 0)
+	add(p.Rating.Aim/100, weightAim, p.Rating.Aim > 0)
+	add(p.Rating.Positioning/100, weightPositioning, p.Rating.Positioning > 0)
 	add(p.Rating.Utility/100, 0.04, p.Rating.Utility > 0)
 
 	ct, t := p.Stats.CtOpeningDuelSuccessPercentage, p.Stats.TOpeningDuelSuccessPercentage

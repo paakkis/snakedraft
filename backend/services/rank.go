@@ -20,6 +20,21 @@ const (
 	rankHalfLife = 365 * 24 * time.Hour
 )
 
+const (
+	// mechanicsTolerance is how far the measured mechanics may sit above the
+	// rank before the rank is questioned. Among settled players the two stay
+	// within a few points of each other, with mechanics usually the lower.
+	mechanicsTolerance = 0.05
+
+	// mechanicsPull is the share of the gap beyond the tolerance that the
+	// rank is raised by. Mechanics are not the whole game, so the rank only
+	// moves part of the way.
+	mechanicsPull = 0.5
+
+	// underratedGap is the gap from which a player is flagged as underrated.
+	underratedGap = 0.10
+)
+
 // Rank sources.
 const (
 	RankSourceFaceit  = "faceit"
@@ -34,8 +49,16 @@ const UnknownMatches = -1
 type RankAssessment struct {
 	// Source is RankSourceFaceit, RankSourcePremier, or "" without a rank.
 	Source string
-	// Value is the rank normalised to 0–1; 0 means the player has no rank.
+	// Value is the rank the player is scored on, normalised to 0–1: the
+	// listed rank plus any correction. 0 means the player has no rank.
 	Value float64
+	// Listed is the rank as the platform shows it, normalised to 0–1.
+	Listed float64
+	// Mechanics is the player's measured aim and positioning (0–1), or 0
+	// when Leetify has no ratings for them.
+	Mechanics float64
+	// Underrated is set when the mechanics sit well above the listed rank.
+	Underrated bool
 	// Confidence (0–1) scales the weight the rank gets in the skill score.
 	Confidence float64
 	// Matches is how many matches are behind the rank, or UnknownMatches.
@@ -117,7 +140,38 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	if best.Value <= 0 {
 		return RankAssessment{Matches: UnknownMatches}
 	}
+	best.Listed = best.Value
+
+	// Aim and positioning are measured per match and do not depend on who
+	// the player is matched against, so they show skill the rank has not
+	// caught up with yet. Only ever raises the rank: a rank above the
+	// mechanics is normal for players who win on game sense and teamwork.
+	if p != nil {
+		best.Mechanics = mechanics(p)
+	}
+	if gap := best.Mechanics - best.Listed; best.Mechanics > 0 && gap > mechanicsTolerance {
+		best.Value = math.Min(1, best.Listed+mechanicsPull*(gap-mechanicsTolerance))
+		best.Underrated = gap >= underratedGap
+	}
 	return best
+}
+
+// mechanics is the average of a player's Leetify aim and positioning ratings
+// (0–1), weighted as in the skill score. 0 when neither is known.
+func mechanics(p *LeetifyProfile) float64 {
+	var sum, weight float64
+	if p.Rating.Aim > 0 {
+		sum += p.Rating.Aim / 100 * weightAim
+		weight += weightAim
+	}
+	if p.Rating.Positioning > 0 {
+		sum += p.Rating.Positioning / 100 * weightPositioning
+		weight += weightPositioning
+	}
+	if weight == 0 {
+		return 0
+	}
+	return sum / weight
 }
 
 func isFaceitMatch(m RecentMatch) bool { return m.DataSource == "faceit" }
