@@ -383,4 +383,24 @@ func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats 
 			p.Faceit.LastMatchAt = r.LastMatchAt
 		}
 	}
+
+	if rank := services.AssessRank(profile, faceit); rank.Value > 0 {
+		p.RankCheck = &models.RankCheck{
+			Source:        rank.Source,
+			Confidence:    rank.Confidence,
+			Listed:        rank.Listed * 100,
+			Adjusted:      rank.Value * 100,
+			Underrated:    rank.Underrated,
+			Mechanics:     rank.Mechanics * 100,
+			Outperforming: rank.Outperforming,
+		}
+		if rank.Matches != services.UnknownMatches {
+			p.RankCheck.Matches = &rank.Matches
+		}
+		if faceit != nil && faceit.Performance != nil {
+			p.RankCheck.ImpliedElo = faceit.Performance.ImpliedElo
+			p.RankCheck.LobbyElo = faceit.Performance.LobbyElo
+			p.RankCheck.PerformanceMatches = faceit.Performance.Matches
+		}
+	}
 }

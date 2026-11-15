@@ -36,6 +36,21 @@ export interface FaceitStats {
   last_match_at?: string
 }
 
+/** How far a player's rank can be trusted, and signs that it is too low. */
+export interface RankCheck {
+  source: 'faceit' | 'premier'
+  confidence: number          // 0–1, share of its normal weight the rank gets
+  matches?: number            // matches behind the rank, if known
+  listed: number              // rank as the platform shows it, 0–100
+  adjusted: number            // rank the player is scored on, 0–100
+  underrated: boolean         // aim and positioning sit well above the rank
+  mechanics?: number          // 0–100
+  outperforming: boolean      // performs like a clearly higher Faceit ELO
+  implied_elo?: number
+  lobby_elo?: number
+  performance_matches?: number
+}
+
 export interface Player {
   id: string
   tournament_id: string
@@ -56,6 +71,7 @@ export interface Player {
   leetify?: LeetifyStats
   steam?: SteamStats
   faceit?: FaceitStats
+  rank_check?: RankCheck
   fetched_at?: string
 }
 

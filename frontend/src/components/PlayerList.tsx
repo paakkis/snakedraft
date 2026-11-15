@@ -97,6 +97,47 @@ function source(p: Player): { label: string; className: string; title: string } 
   }
 }
 
+// Below this confidence a rank counts for less than half of its normal weight.
+const UNSURE_RANK_CONFIDENCE = 0.5
+
+/** Marks next to the score: signs the rank is too low, and a rank too thin to trust. */
+function RankFlags({ player }: { player: Player }) {
+  const c = player.rank_check
+  if (!c || player.skill_score == null || player.skill_score < 0) return null
+  const platform = c.source === 'faceit' ? 'Faceit' : 'Premier'
+
+  const better: string[] = []
+  if (c.outperforming && c.implied_elo && c.lobby_elo && player.faceit_elo) {
+    better.push(
+      `Performs like ${Math.round(c.implied_elo).toLocaleString()} ELO over the last ${c.performance_matches} Faceit matches `
+      + `(own ELO ${player.faceit_elo.toLocaleString()}, lobbies average ${Math.round(c.lobby_elo).toLocaleString()})`,
+    )
+  }
+  if (c.underrated && c.mechanics) {
+    better.push(`Aim and positioning (${c.mechanics.toFixed(0)}) are well above the ${platform} rank (${c.listed.toFixed(0)})`)
+  }
+  const betterTitle = better.length
+    ? `Probably better than the rank shows. ${better.join('. ')}. Scored on a rank of ${c.adjusted.toFixed(0)}.`
+    : null
+
+  const unsureTitle = c.confidence < UNSURE_RANK_CONFIDENCE
+    ? `${platform} rank is uncertain`
+      + (c.matches != null ? ` (about ${c.matches.toLocaleString()} matches)` : '')
+      + `. It counts for ${Math.round(c.confidence * 100)}% of its normal weight, so the other stats count for more.`
+    : null
+
+  return (
+    <>
+      {betterTitle && (
+        <span className="text-xs text-emerald-400 cursor-help" title={betterTitle} aria-label={betterTitle}>▲</span>
+      )}
+      {unsureTitle && (
+        <span className="text-xs text-amber-400 cursor-help" title={unsureTitle} aria-label={unsureTitle}>?</span>
+      )}
+    </>
+  )
+}
+
 function ScoreCell({ score }: { score?: number }) {
   if (score == null || score < 0) return <span className="text-zinc-700">–</span>
   const pct = Math.min(Math.max(score, 1), 100)
@@ -336,7 +377,12 @@ export default function PlayerList() {
                     <td className={`px-2 py-1.5 text-xs whitespace-nowrap ${src.className}`} title={src.title}>
                       {src.label}
                     </td>
-                    <td className="px-2 py-1.5"><ScoreCell score={p.skill_score} /></td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <RankFlags player={p} />
+                        <ScoreCell score={p.skill_score} />
+                      </div>
+                    </td>
                     <td className="px-2 py-1.5 text-right whitespace-nowrap">
                       <button
                         onClick={() => refreshPlayers([p.id])}

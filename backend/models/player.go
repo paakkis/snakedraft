@@ -46,6 +46,30 @@ type FaceitStats struct {
 	LastMatchAt   *time.Time `json:"last_match_at,omitempty"`
 }
 
+// RankCheck says how far a player's rank can be trusted, and whether there
+// are signs that it is too low. Values on the 0–100 scale match the skill
+// score.
+type RankCheck struct {
+	Source string `json:"source"` // "faceit" or "premier"
+	// Confidence (0–1) is the share of its normal weight the rank gets.
+	Confidence float64 `json:"confidence"`
+	// Matches behind the rank; omitted when unknown.
+	Matches *int `json:"matches,omitempty"`
+	// Listed is the rank as the platform shows it, Adjusted the one the
+	// player is scored on.
+	Listed   float64 `json:"listed"`
+	Adjusted float64 `json:"adjusted"`
+	// Underrated: aim and positioning sit well above the rank.
+	Underrated bool    `json:"underrated"`
+	Mechanics  float64 `json:"mechanics,omitempty"`
+	// Outperforming: the player keeps performing like a clearly higher
+	// Faceit ELO than their own, given the lobbies they play in.
+	Outperforming      bool    `json:"outperforming"`
+	ImpliedElo         float64 `json:"implied_elo,omitempty"`
+	LobbyElo           float64 `json:"lobby_elo,omitempty"`
+	PerformanceMatches int     `json:"performance_matches,omitempty"`
+}
+
 type Player struct {
 	ID            string `json:"id"`
 	TournamentID  string `json:"tournament_id"`
@@ -67,6 +91,7 @@ type Player struct {
 	Leetify        *LeetifyStats `json:"leetify,omitempty"`
 	Steam          *SteamStats   `json:"steam,omitempty"`
 	Faceit         *FaceitStats  `json:"faceit,omitempty"`
+	RankCheck      *RankCheck    `json:"rank_check,omitempty"`
 	FetchedAt      *time.Time    `json:"fetched_at"`
 	CreatedAt      time.Time     `json:"created_at"`
 
