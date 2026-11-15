@@ -128,14 +128,41 @@ func TestAssessRank(t *testing.T) {
 		t.Errorf("new Premier player: got %+v", a)
 	}
 
-	// The better rank is the one that counts, with its own confidence.
+	// A settled, better Faceit rank wins over the thin Premier one.
 	a = AssessRank(p, &FaceitPlayer{Elo: 2400, LifetimeMatches: 180})
 	if a.Source != RankSourceFaceit || !near(a.Value, 0.8) || !near(a.Confidence, 0.9) {
 		t.Errorf("better Faceit rank: got %+v", a)
 	}
-	a = AssessRank(p, &FaceitPlayer{Elo: 900, LifetimeMatches: 180})
-	if a.Source != RankSourcePremier {
-		t.Errorf("better Premier rank: got %+v", a)
+
+	// The other rank backs the best one up in proportion to how close it is.
+	// A thin Faceit rank a little above Premier: its own confidence is 0.2,
+	// Premier's backing is 0.33·0.5/0.55.
+	a = AssessRank(p, &FaceitPlayer{Elo: 1650, LifetimeMatches: 5})
+	if a.Source != RankSourceFaceit || !near(a.Value, 0.55) || !near(a.Confidence, 10.0/30*0.5/0.55) {
+		t.Errorf("thin Faceit rank backed by Premier: got %+v", a)
+	}
+
+	// A settled Premier rating right behind a thin Faceit rank leaves little doubt…
+	settled := &LeetifyProfile{PrivacyMode: "public", TotalMatches: 1000}
+	settled.Ranks.Premier = 17500
+	settled.RecentMatches = recentMatches(100, "matchmaking", leetifyRankTypePremier, testNow)
+	premierConf := 1000.0 / 1020
+	a = AssessRank(settled, &FaceitPlayer{Elo: 1650, LifetimeMatches: 5})
+	if a.Source != RankSourceFaceit || !near(a.Confidence, premierConf*0.5/0.55) {
+		t.Errorf("thin Faceit rank backed by settled Premier: got %+v", a)
+	}
+
+	// …while one far below it adds little.
+	a = AssessRank(settled, &FaceitPlayer{Elo: 3000, LifetimeMatches: 5})
+	if !near(a.Confidence, premierConf*0.5) {
+		t.Errorf("distant backing: got %+v", a)
+	}
+
+	// A worse rank never lowers the confidence of the best one, and a
+	// barely-used Faceit account does not pull a good Premier rating down.
+	a = AssessRank(settled, &FaceitPlayer{Elo: 900, LifetimeMatches: 3})
+	if a.Source != RankSourcePremier || !near(a.Value, 0.5) || !near(a.Confidence, premierConf) {
+		t.Errorf("settled Premier with a barely-used Faceit account: got %+v", a)
 	}
 
 	// Without Faceit's own data, Leetify's copy and its Faceit matches are used.
@@ -178,14 +205,16 @@ func TestComputeSkillScore_UnsettledRankCountsLess(t *testing.T) {
 	}
 }
 
-func TestComputeFaceitScore_UnsettledElo(t *testing.T) {
+func TestComputeFaceitScore_FormWeightIsFixed(t *testing.T) {
 	fixClock(t, testNow)
 
-	// Strong recent form on a 5-match account: ELO 0.5 at weight 0.75·0.2,
-	// form 1.0 at weight 0.25 → (0.075 + 0.25) / 0.4 = 81.25.
-	f := &FaceitPlayer{Elo: 1500, LifetimeMatches: 5, Recent: &FaceitRecent{Matches: 5, KDRatio: 1.4, ADR: 100}}
-	if got := ComputeFaceitScore(f); math.Abs(got-81.25) > 0.01 {
-		t.Errorf("got %v, want 81.25", got)
+	// A thin rank must not hand its weight to the recent form, which depends
+	// on the lobbies: 0.5·75% + 1.0·25% = 62.5 whatever the match count.
+	for _, lifetime := range []int{5, 2000} {
+		f := &FaceitPlayer{Elo: 1500, LifetimeMatches: lifetime, Recent: &FaceitRecent{Matches: 5, KDRatio: 1.4, ADR: 100}}
+		if got := ComputeFaceitScore(f); math.Abs(got-62.5) > 0.01 {
+			t.Errorf("%d lifetime matches: got %v, want 62.5", lifetime, got)
+		}
 	}
 }
 
@@ -348,9 +377,9 @@ func TestAssessRank_PerformanceAgainstLobby(t *testing.T) {
 
 	// The adjusted Faceit rank is what competes with Premier.
 	p := &LeetifyProfile{PrivacyMode: "public"}
-	p.Ranks.Premier = 14000 // 0.4
+	p.Ranks.Premier = 1750 // 0.05
 	if a := AssessRank(p, player(1000, 5, 5, 2000)); a.Source != RankSourceFaceit || !near(a.Value, 1425.0/3000) {
-		t.Errorf("adjusted Faceit rank should beat Premier 0.4: got %+v", a)
+		t.Errorf("adjusted Faceit rank should beat a very low Premier: got %+v", a)
 	}
 
 	// The mechanics are compared with the adjusted rank, so the same
@@ -358,6 +387,12 @@ func TestAssessRank_PerformanceAgainstLobby(t *testing.T) {
 	p.Rating.Aim, p.Rating.Positioning = 50, 50
 	if a := AssessRank(p, player(1000, 5, 5, 2000)); !near(a.Value, 1425.0/3000) || a.Underrated {
 		t.Errorf("mechanics within tolerance of the adjusted rank: got %+v", a)
+	}
+
+	// Scored on a settled Premier rank, the player is still flagged.
+	p.Ranks.Premier = 21000
+	if a := AssessRank(p, player(1000, 5, 5, 2000)); a.Source != RankSourcePremier || !near(a.Value, 0.6) || !a.Outperforming {
+		t.Errorf("flag must survive being scored on Premier: got %+v", a)
 	}
 }
 

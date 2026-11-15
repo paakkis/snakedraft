@@ -133,17 +133,16 @@ func faceitEloOf(p *LeetifyProfile) float64 {
 //	25% recent form over the last FaceitRecentMatches matches
 //	    (K/D 0.6–1.4 and ADR 50–100, equally weighted)
 //
-// The ELO weight is multiplied by the rank's confidence, and the ELO itself
-// is moved towards the one the player performed like against their recent
-// lobbies (see AssessRank).
+// The ELO is moved towards the one the player performed like against their
+// recent lobbies (see AssessRank). Its weight is not scaled by the rank's
+// confidence here: the only thing it could shift to is the recent form, and
+// K/D and ADR depend on how strong the lobbies were.
+//
 // Without recent matches the ELO stands alone.
 func ComputeFaceitScore(f *FaceitPlayer) float64 {
-	rank := AssessRank(nil, f)
-	score := rank.Value
+	score := AssessRank(nil, f).Value
 	if f.Recent != nil && f.Recent.Matches > 0 {
-		form := faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)
-		eloWeight := 0.75 * rank.Confidence
-		score = (score*eloWeight + form*0.25) / (eloWeight + 0.25)
+		score = score*0.75 + faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)*0.25
 	}
 	return math.Round(score*10000) / 100
 }

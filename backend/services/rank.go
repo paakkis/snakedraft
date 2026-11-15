@@ -89,7 +89,8 @@ type RankAssessment struct {
 	Outperforming bool
 	// Confidence (0–1) scales the weight the rank gets in the skill score.
 	Confidence float64
-	// Matches is how many matches are behind the rank, or UnknownMatches.
+	// Matches is how many matches are behind the rank on its own platform,
+	// or UnknownMatches.
 	Matches int
 	// LastPlayed is when the rank was last played for, if known.
 	LastPlayed *time.Time
@@ -173,13 +174,20 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 
 	// A player is at least as good as their best platform shows; a low rank
 	// on the other one usually just means they barely play there.
-	best := faceit
-	if premier.Value > best.Value || (premier.Value == best.Value && premier.Confidence > best.Confidence) {
-		best = premier
+	best, other := faceit, premier
+	if premier.Value > faceit.Value || (premier.Value == faceit.Value && premier.Confidence > faceit.Confidence) {
+		best, other = premier, faceit
 	}
 	if best.Value <= 0 {
 		return RankAssessment{Matches: UnknownMatches}
 	}
+	// The other rank backs the best one up, the more so the closer it is: a
+	// thin rank that a settled one nearly agrees with is not in much doubt.
+	if backing := other.Confidence * other.Value / best.Value; backing > best.Confidence {
+		best.Confidence = backing
+	}
+	// Worth knowing about the player whichever rank they are scored on.
+	best.Outperforming = faceit.Outperforming
 
 	// Aim and positioning are measured per match and do not depend on who
 	// the player is matched against, so they show skill the rank has not
