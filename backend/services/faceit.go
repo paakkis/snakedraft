@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -14,6 +16,11 @@ var faceitBaseURL = "https://open.faceit.com/data/v4"
 
 // FaceitRecentMatches is how many of a player's latest matches are summarised.
 const FaceitRecentMatches = 30
+
+// FaceitPerformanceMatches is how many of a player's latest matches are
+// looked up one by one to compare their performance with the lobby's ELO.
+// Each one costs a request.
+const FaceitPerformanceMatches = 10
 
 // FaceitPlayer is a player's current CS2 standing on Faceit, straight from
 // the Faceit Data API. It is more up to date than the Faceit rank Leetify
@@ -28,6 +35,26 @@ type FaceitPlayer struct {
 	LifetimeMatches int `json:"lifetime_matches,omitempty"`
 	// Recent is nil when the player has no recent CS2 matches on Faceit.
 	Recent *FaceitRecent `json:"recent,omitempty"`
+	// Performance is nil when no lobby could be looked up.
+	Performance *FaceitPerformance `json:"performance,omitempty"`
+}
+
+// FaceitPerformance compares how a player did in their latest matches with
+// how strong those lobbies were.
+type FaceitPerformance struct {
+	Matches int `json:"matches"`
+	// ImpliedElo is the ELO the player performed like (see impliedElo).
+	ImpliedElo float64 `json:"implied_elo"`
+	// LobbyElo is the average ELO of the lobbies, both teams included.
+	LobbyElo float64 `json:"lobby_elo"`
+}
+
+// faceitMatch is one match from a player's point of view.
+type faceitMatch struct {
+	id         string
+	finishedAt float64 // unix milliseconds
+	kd, adr    float64
+	lobbyElo   float64 // 0 until looked up, or when unknown
 }
 
 // FaceitRecent summarises a player's latest Faceit matches.
@@ -86,10 +113,84 @@ func (s *FaceitService) GetPlayer(steam64ID string) (*FaceitPlayer, error) {
 	if n, err := s.lifetimeMatches(profile.PlayerID); err == nil {
 		player.LifetimeMatches = n
 	}
-	if recent, err := s.recentStats(profile.PlayerID); err == nil {
+	if recent, matches, err := s.recentStats(profile.PlayerID); err == nil {
 		player.Recent = recent
+		player.Performance = s.performance(matches)
 	}
 	return player, nil
+}
+
+// performance looks up the lobbies of a player's latest matches and returns
+// what ELO they performed like, or nil when no lobby is known.
+func (s *FaceitService) performance(matches []faceitMatch) *FaceitPerformance {
+	sort.SliceStable(matches, func(i, j int) bool { return matches[i].finishedAt > matches[j].finishedAt })
+	if len(matches) > FaceitPerformanceMatches {
+		matches = matches[:FaceitPerformanceMatches]
+	}
+
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 5) // be gentle with the API
+	for i := range matches {
+		if matches[i].id == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(m *faceitMatch) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			// A lobby that cannot be fetched just leaves that match out.
+			m.lobbyElo, _ = s.lobbyElo(m.id)
+		}(&matches[i])
+	}
+	wg.Wait()
+
+	return summarisePerformance(matches)
+}
+
+// lobbyElo returns the average ELO of the two teams in a match, or 0 when
+// Faceit does not say.
+func (s *FaceitService) lobbyElo(matchID string) (float64, error) {
+	var match struct {
+		Teams map[string]struct {
+			Stats struct {
+				Rating float64 `json:"rating"`
+			} `json:"stats"`
+			Roster []struct {
+				SkillLevel int `json:"game_skill_level"`
+			} `json:"roster"`
+		} `json:"teams"`
+	}
+	found, err := s.get("/matches/"+url.PathEscape(matchID), &match)
+	if err != nil || !found {
+		return 0, err
+	}
+
+	var sum float64
+	var teams int
+	for _, team := range match.Teams {
+		elo := team.Stats.Rating
+		if elo <= 0 {
+			// No team rating (e.g. hub matches): estimate from the levels.
+			var levels, n float64
+			for _, r := range team.Roster {
+				if r.SkillLevel >= 1 && r.SkillLevel < len(faceitLevelElo) {
+					levels += faceitLevelElo[r.SkillLevel]
+					n++
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			elo = levels / n
+		}
+		sum += elo
+		teams++
+	}
+	if teams == 0 {
+		return 0, nil
+	}
+	return sum / float64(teams), nil
 }
 
 // lifetimeMatches returns how many CS2 matches a player has on Faceit.
@@ -117,7 +218,9 @@ func faceitNum(stats map[string]any, key string) float64 {
 	return 0
 }
 
-func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, error) {
+// recentStats summarises a player's latest matches, and also returns them
+// one by one.
+func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, []faceitMatch, error) {
 	var result struct {
 		Items []struct {
 			Stats map[string]any `json:"stats"`
@@ -126,12 +229,13 @@ func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, error) {
 	path := fmt.Sprintf("/players/%s/games/cs2/stats?limit=%d", url.PathEscape(playerID), FaceitRecentMatches)
 	found, err := s.get(path, &result)
 	if err != nil || !found || len(result.Items) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 
 	num := faceitNum
 
 	recent := &FaceitRecent{Matches: len(result.Items)}
+	matches := make([]faceitMatch, 0, len(result.Items))
 	var kills, deaths, headshots, adrSum, wins, latest float64
 	for _, item := range result.Items {
 		kills += num(item.Stats, "Kills")
@@ -139,9 +243,17 @@ func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, error) {
 		headshots += num(item.Stats, "Headshots")
 		adrSum += num(item.Stats, "ADR")
 		wins += num(item.Stats, "Result")
-		if at := num(item.Stats, "Match Finished At"); at > latest {
+		at := num(item.Stats, "Match Finished At")
+		if at > latest {
 			latest = at
 		}
+
+		m := faceitMatch{finishedAt: at, adr: num(item.Stats, "ADR"), kd: num(item.Stats, "Kills")}
+		m.id, _ = item.Stats["Match Id"].(string)
+		if d := num(item.Stats, "Deaths"); d > 0 {
+			m.kd /= d
+		}
+		matches = append(matches, m)
 	}
 	if deaths > 0 {
 		recent.KDRatio = kills / deaths
@@ -157,7 +269,7 @@ func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, error) {
 		t := time.UnixMilli(int64(latest)).UTC()
 		recent.LastMatchAt = &t
 	}
-	return recent, nil
+	return recent, matches, nil
 }
 
 // get fetches a Data API path into out. found is false on 404.

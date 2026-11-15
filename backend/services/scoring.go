@@ -24,9 +24,10 @@ const (
 //
 // The rank weight is multiplied by the rank's confidence (see AssessRank), so
 // a rank earned over a handful of matches, or one not played for in a long
-// time, counts for less and the measured stats count for more. A rank that
-// sits well below the player's aim and positioning is raised part of the way
-// towards them.
+// time, counts for less and the measured stats count for more. A Faceit ELO
+// is moved towards the one the player performed like against their recent
+// lobbies, and a rank that sits well below the player's aim and positioning
+// is raised part of the way towards them.
 //
 // A player is never penalised for not being active on a platform: a missing
 // source is left out instead of counted as zero, and its weight is spread
@@ -132,13 +133,15 @@ func faceitEloOf(p *LeetifyProfile) float64 {
 //	25% recent form over the last FaceitRecentMatches matches
 //	    (K/D 0.6–1.4 and ADR 50–100, equally weighted)
 //
-// The ELO weight is multiplied by the rank's confidence (see AssessRank).
+// The ELO weight is multiplied by the rank's confidence, and the ELO itself
+// is moved towards the one the player performed like against their recent
+// lobbies (see AssessRank).
 // Without recent matches the ELO stands alone.
 func ComputeFaceitScore(f *FaceitPlayer) float64 {
 	rank := AssessRank(nil, f)
 	score := rank.Value
 	if f.Recent != nil && f.Recent.Matches > 0 {
-		form := (normalize(f.Recent.KDRatio, 0.6, 1.4) + normalize(f.Recent.ADR, 50, 100)) / 2
+		form := faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)
 		eloWeight := 0.75 * rank.Confidence
 		score = (score*eloWeight + form*0.25) / (eloWeight + 0.25)
 	}

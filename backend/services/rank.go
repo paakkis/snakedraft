@@ -35,6 +35,31 @@ const (
 	underratedGap = 0.10
 )
 
+const (
+	// performanceEloRange is how far above or below the lobby's ELO a single
+	// match can place a player. It mirrors the performance rating used in
+	// chess, where a clean sweep is worth 400 points over the opposition.
+	performanceEloRange = 400.0
+
+	// performanceDecay weighs each match 15% less than the one after it.
+	performanceDecay = 0.85
+
+	// performanceSettleMatches is how many matches it takes for the implied
+	// ELO to earn half of its full pull on the rank.
+	performanceSettleMatches = 5.0
+
+	// performanceMinPull is the share of the pull that remains even for a
+	// fully settled rank: ELO follows team results, so it can lag behind a
+	// player who keeps performing above their lobbies.
+	performanceMinPull = 0.25
+
+	// outperformingElo and outperformingMatches are the gap between implied
+	// and listed ELO, and the number of matches it must hold over, from
+	// which a player is flagged as underrated.
+	outperformingElo     = 150.0
+	outperformingMatches = 5
+)
+
 // Rank sources.
 const (
 	RankSourceFaceit  = "faceit"
@@ -59,6 +84,9 @@ type RankAssessment struct {
 	Mechanics float64
 	// Underrated is set when the mechanics sit well above the listed rank.
 	Underrated bool
+	// Outperforming is set when a player keeps performing like a clearly
+	// higher Faceit ELO than their own, given the lobbies they play in.
+	Outperforming bool
 	// Confidence (0–1) scales the weight the rank gets in the skill score.
 	Confidence float64
 	// Matches is how many matches are behind the rank, or UnknownMatches.
@@ -100,7 +128,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 
 	switch {
 	case f != nil && f.Elo > 0:
-		faceit = RankAssessment{Source: RankSourceFaceit, Value: normalizeFaceitElo(float64(f.Elo)), Matches: UnknownMatches}
+		faceit = RankAssessment{Source: RankSourceFaceit, Listed: normalizeFaceitElo(float64(f.Elo)), Matches: UnknownMatches}
 		if f.LifetimeMatches > 0 {
 			faceit.Matches = f.LifetimeMatches
 		}
@@ -108,7 +136,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 			faceit.LastPlayed = f.Recent.LastMatchAt
 		}
 	case p != nil && faceitEloOf(p) > 0:
-		faceit = RankAssessment{Source: RankSourceFaceit, Value: normalizeFaceitElo(faceitEloOf(p)), Matches: UnknownMatches}
+		faceit = RankAssessment{Source: RankSourceFaceit, Listed: normalizeFaceitElo(faceitEloOf(p)), Matches: UnknownMatches}
 	}
 	if faceit.Source != "" && p != nil {
 		n, last := leetifyMatches(p, isFaceitMatch)
@@ -121,7 +149,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	}
 
 	if p != nil && p.Ranks.Premier > 0 {
-		premier = RankAssessment{Source: RankSourcePremier, Value: normalize(float64(p.Ranks.Premier), 0, 35000)}
+		premier = RankAssessment{Source: RankSourcePremier, Listed: normalize(float64(p.Ranks.Premier), 0, 35000)}
 		premier.Matches, _ = leetifyMatches(p, isPremierMatch)
 		if at, ok := PremierRatedAt(p); ok {
 			premier.LastPlayed = &at
@@ -130,6 +158,18 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 
 	faceit.Confidence = rankConfidence(faceit.Matches, faceit.LastPlayed)
 	premier.Confidence = rankConfidence(premier.Matches, premier.LastPlayed)
+	faceit.Value, premier.Value = faceit.Listed, premier.Listed
+
+	// Performance against the lobby moves the Faceit ELO towards the ELO the
+	// player performed like. The less settled the rank and the more matches
+	// the performance covers, the further it moves. This works both ways.
+	if perf := performanceOf(f); perf != nil {
+		m := float64(perf.Matches)
+		pull := (1 - (1-performanceMinPull)*faceit.Confidence) * m / (m + performanceSettleMatches)
+		elo := float64(f.Elo)
+		faceit.Value = normalizeFaceitElo(elo + pull*(perf.ImpliedElo-elo))
+		faceit.Outperforming = perf.Matches >= outperformingMatches && perf.ImpliedElo-elo >= outperformingElo
+	}
 
 	// A player is at least as good as their best platform shows; a low rank
 	// on the other one usually just means they barely play there.
@@ -140,7 +180,6 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	if best.Value <= 0 {
 		return RankAssessment{Matches: UnknownMatches}
 	}
-	best.Listed = best.Value
 
 	// Aim and positioning are measured per match and do not depend on who
 	// the player is matched against, so they show skill the rank has not
@@ -149,11 +188,53 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	if p != nil {
 		best.Mechanics = mechanics(p)
 	}
-	if gap := best.Mechanics - best.Listed; best.Mechanics > 0 && gap > mechanicsTolerance {
-		best.Value = math.Min(1, best.Listed+mechanicsPull*(gap-mechanicsTolerance))
+	if gap := best.Mechanics - best.Value; best.Mechanics > 0 && gap > mechanicsTolerance {
+		best.Value = math.Min(1, best.Value+mechanicsPull*(gap-mechanicsTolerance))
 		best.Underrated = gap >= underratedGap
 	}
 	return best
+}
+
+// performanceOf returns a player's usable Faceit performance, or nil.
+func performanceOf(f *FaceitPlayer) *FaceitPerformance {
+	if f == nil || f.Elo <= 0 || f.Performance == nil || f.Performance.Matches <= 0 {
+		return nil
+	}
+	return f.Performance
+}
+
+// faceitMatchRating rates a single Faceit match from 0 to 1 on K/D (0.6–1.4)
+// and ADR (50–100), equally weighted. 0.5 is an average player in the lobby.
+func faceitMatchRating(kd, adr float64) float64 {
+	return (normalize(kd, 0.6, 1.4) + normalize(adr, 50, 100)) / 2
+}
+
+// summarisePerformance works out what ELO a player performed like over the
+// given matches (newest first). Each match with a known lobby implies
+//
+//	lobby ELO + 400 · (2 · rating − 1)
+//
+// so an average game means the player belongs in that lobby, and a dominant
+// one that they belong 400 ELO above it. The matches are averaged with each
+// one weighing 15% less than the one after it. Returns nil when no lobby is
+// known.
+func summarisePerformance(matches []faceitMatch) *FaceitPerformance {
+	var implied, lobby, weightSum float64
+	n := 0
+	for _, m := range matches {
+		if m.lobbyElo <= 0 {
+			continue
+		}
+		w := math.Pow(performanceDecay, float64(n))
+		implied += w * (m.lobbyElo + performanceEloRange*(2*faceitMatchRating(m.kd, m.adr)-1))
+		lobby += m.lobbyElo
+		weightSum += w
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	return &FaceitPerformance{Matches: n, ImpliedElo: implied / weightSum, LobbyElo: lobby / float64(n)}
 }
 
 // mechanics is the average of a player's Leetify aim and positioning ratings

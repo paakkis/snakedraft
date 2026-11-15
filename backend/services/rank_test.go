@@ -252,3 +252,121 @@ func TestComputeSkillScore_UnderratedPlayerScoresHigher(t *testing.T) {
 		t.Errorf("got %v, want 64.53", got)
 	}
 }
+
+func TestFaceitMatchRating(t *testing.T) {
+	cases := []struct{ kd, adr, want float64 }{
+		{1.0, 75, 0.5}, // an average player in the lobby
+		{1.4, 100, 1},
+		{0.6, 50, 0},
+		{3.0, 150, 1}, // clamped
+		{1.4, 50, 0.5},
+	}
+	for _, c := range cases {
+		if got := faceitMatchRating(c.kd, c.adr); !near(got, c.want) {
+			t.Errorf("faceitMatchRating(%v, %v) = %v, want %v", c.kd, c.adr, got, c.want)
+		}
+	}
+}
+
+func TestSummarisePerformance(t *testing.T) {
+	if p := summarisePerformance(nil); p != nil {
+		t.Errorf("no matches: got %+v", p)
+	}
+	if p := summarisePerformance([]faceitMatch{{kd: 2, adr: 120}}); p != nil {
+		t.Errorf("no known lobby: got %+v", p)
+	}
+
+	// An average game: the player belongs in that lobby.
+	p := summarisePerformance([]faceitMatch{{kd: 1.0, adr: 75, lobbyElo: 2000}})
+	if p == nil || p.Matches != 1 || !near(p.ImpliedElo, 2000) || !near(p.LobbyElo, 2000) {
+		t.Errorf("average game: got %+v", p)
+	}
+
+	// Dominating and being dominated: 400 ELO either side of the lobby.
+	if p := summarisePerformance([]faceitMatch{{kd: 1.4, adr: 100, lobbyElo: 2000}}); !near(p.ImpliedElo, 2400) {
+		t.Errorf("dominant game: got %v, want 2400", p.ImpliedElo)
+	}
+	if p := summarisePerformance([]faceitMatch{{kd: 0.6, adr: 50, lobbyElo: 2000}}); !near(p.ImpliedElo, 1600) {
+		t.Errorf("dominated game: got %v, want 1600", p.ImpliedElo)
+	}
+
+	// Newer matches weigh more, and matches without a lobby are left out
+	// without taking up a place in the decay.
+	p = summarisePerformance([]faceitMatch{
+		{kd: 1.4, adr: 100, lobbyElo: 2000}, // 2400, weight 1
+		{kd: 9, adr: 200},                   // unknown lobby
+		{kd: 1.0, adr: 75, lobbyElo: 1000},  // 1000, weight 0.85
+	})
+	want := (2400 + 0.85*1000) / 1.85
+	if p.Matches != 2 || !near(p.ImpliedElo, want) || !near(p.LobbyElo, 1500) {
+		t.Errorf("mixed matches: got %+v, want implied %v over 2 matches", p, want)
+	}
+}
+
+func TestAssessRank_PerformanceAgainstLobby(t *testing.T) {
+	fixClock(t, testNow)
+	player := func(elo, lifetime, perfMatches int, implied float64) *FaceitPlayer {
+		return &FaceitPlayer{Elo: elo, LifetimeMatches: lifetime,
+			Performance: &FaceitPerformance{Matches: perfMatches, ImpliedElo: implied}}
+	}
+
+	// A 5-match account at 1000 ELO holding its own in 2000 ELO lobbies.
+	// Confidence 0.2 → pull (1 − 0.75·0.2) · 5/10 = 0.425 → 1425 ELO.
+	a := AssessRank(nil, player(1000, 5, 5, 2000))
+	if !near(a.Listed, 1000.0/3000) || !near(a.Value, 1425.0/3000) || !a.Outperforming {
+		t.Errorf("fresh account in strong lobbies: got %+v", a)
+	}
+	if !near(a.Confidence, 0.2) {
+		t.Errorf("performance must not change the confidence: got %v", a.Confidence)
+	}
+
+	// The same performance on a settled rank moves it much less:
+	// confidence 0.99 → pull (1 − 0.75·0.99) · 10/15 ≈ 0.17.
+	settled := AssessRank(nil, player(1000, 1980, 10, 2000))
+	wantElo := 1000 + (1-0.75*0.99)*(10.0/15)*1000
+	if !near(settled.Value, wantElo/3000) || settled.Value >= a.Value {
+		t.Errorf("settled rank: got %v, want %v", settled.Value, wantElo/3000)
+	}
+
+	// It works both ways: a player carried above their level is moved down.
+	a = AssessRank(nil, player(2000, 5, 5, 1000))
+	if !near(a.Value, 1575.0/3000) || a.Outperforming {
+		t.Errorf("underperforming account: got %+v", a)
+	}
+
+	// Performing like one's own ELO changes nothing.
+	a = AssessRank(nil, player(1500, 100, 10, 1500))
+	if !near(a.Value, 0.5) || a.Outperforming {
+		t.Errorf("performance in line with the rank: got %+v", a)
+	}
+
+	// A big gap over too few matches moves the rank a little but is not flagged.
+	a = AssessRank(nil, player(1000, 300, 2, 2000))
+	if a.Value <= a.Listed || a.Outperforming {
+		t.Errorf("two good matches: got %+v", a)
+	}
+
+	// The adjusted Faceit rank is what competes with Premier.
+	p := &LeetifyProfile{PrivacyMode: "public"}
+	p.Ranks.Premier = 14000 // 0.4
+	if a := AssessRank(p, player(1000, 5, 5, 2000)); a.Source != RankSourceFaceit || !near(a.Value, 1425.0/3000) {
+		t.Errorf("adjusted Faceit rank should beat Premier 0.4: got %+v", a)
+	}
+
+	// The mechanics are compared with the adjusted rank, so the same
+	// evidence is not counted twice: 0.475 vs mechanics 0.5 is within tolerance.
+	p.Rating.Aim, p.Rating.Positioning = 50, 50
+	if a := AssessRank(p, player(1000, 5, 5, 2000)); !near(a.Value, 1425.0/3000) || a.Underrated {
+		t.Errorf("mechanics within tolerance of the adjusted rank: got %+v", a)
+	}
+}
+
+func TestComputeFaceitScore_PerformanceAgainstLobby(t *testing.T) {
+	fixClock(t, testNow)
+
+	// ELO alone, moved from 1000 to 1425 by the performance → 47.5.
+	f := &FaceitPlayer{Elo: 1000, LifetimeMatches: 5, Performance: &FaceitPerformance{Matches: 5, ImpliedElo: 2000}}
+	if got := ComputeFaceitScore(f); math.Abs(got-47.5) > 0.01 {
+		t.Errorf("got %v, want 47.5", got)
+	}
+}
