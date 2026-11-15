@@ -2,6 +2,13 @@ package services
 
 import "math"
 
+// Weights of the skill score components that are referred to elsewhere.
+const (
+	weightRank        = 0.55
+	weightAim         = 0.15
+	weightPositioning = 0.10
+)
+
 // ComputeSkillScore returns a 0–100 normalized skill score for a player.
 // Returns -1 if the profile is private or holds no usable stats.
 //
@@ -15,10 +22,19 @@ import "math"
 //	 8% Recent form (exponentially decayed last 10 matches)
 //	 4% Leetify utility score
 //
+// The rank weight is multiplied by the rank's confidence (see AssessRank), so
+// a rank earned over a handful of matches, or one not played for in a long
+// time, counts for less and the measured stats count for more. A Faceit ELO
+// is moved towards the one the player performed like against their recent
+// lobbies, and a rank that sits well below the player's aim and positioning
+// is raised part of the way towards them.
+//
 // A player is never penalised for not being active on a platform: a missing
 // source is left out instead of counted as zero, and its weight is spread
 // over the components that are present.
-func ComputeSkillScore(p *LeetifyProfile) float64 {
+//
+// faceit is the player's own Faceit data and may be nil.
+func ComputeSkillScore(p *LeetifyProfile, faceit *FaceitPlayer) float64 {
 	if p.PrivacyMode != "public" {
 		return -1
 	}
@@ -31,21 +47,12 @@ func ComputeSkillScore(p *LeetifyProfile) float64 {
 		}
 	}
 
-	// Rank: the better of Faceit and Premier. A player is at least as good
-	// as their best platform shows; a low rank on the other one usually just
-	// means they barely play there (e.g. a handful of Faceit placements).
-	rank := 0.0
-	if elo := faceitEloOf(p); elo > 0 {
-		rank = normalizeFaceitElo(elo)
-	}
-	if p.Ranks.Premier > 0 {
-		rank = math.Max(rank, normalize(float64(p.Ranks.Premier), 0, 35000))
-	}
-	add(rank, 0.55, rank > 0)
+	rank := AssessRank(p, faceit)
+	add(rank.Value, weightRank*rank.Confidence, rank.Value > 0)
 
 	// Leetify reports 0 for ratings it has no data for.
-	add(p.Rating.Aim/100, 0.15, p.Rating.Aim > 0)
-	add(p.Rating.Positioning/100, 0.10, p.Rating.Positioning > 0)
+	add(p.Rating.Aim/100, weightAim, p.Rating.Aim > 0)
+	add(p.Rating.Positioning/100, weightPositioning, p.Rating.Positioning > 0)
 	add(p.Rating.Utility/100, 0.04, p.Rating.Utility > 0)
 
 	ct, t := p.Stats.CtOpeningDuelSuccessPercentage, p.Stats.TOpeningDuelSuccessPercentage
@@ -126,12 +133,16 @@ func faceitEloOf(p *LeetifyProfile) float64 {
 //	25% recent form over the last FaceitRecentMatches matches
 //	    (K/D 0.6–1.4 and ADR 50–100, equally weighted)
 //
+// The ELO is moved towards the one the player performed like against their
+// recent lobbies (see AssessRank). Its weight is not scaled by the rank's
+// confidence here: the only thing it could shift to is the recent form, and
+// K/D and ADR depend on how strong the lobbies were.
+//
 // Without recent matches the ELO stands alone.
 func ComputeFaceitScore(f *FaceitPlayer) float64 {
-	score := normalizeFaceitElo(float64(f.Elo))
+	score := AssessRank(nil, f).Value
 	if f.Recent != nil && f.Recent.Matches > 0 {
-		form := (normalize(f.Recent.KDRatio, 0.6, 1.4) + normalize(f.Recent.ADR, 50, 100)) / 2
-		score = score*0.75 + form*0.25
+		score = score*0.75 + faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)*0.25
 	}
 	return math.Round(score*10000) / 100
 }
@@ -156,14 +167,7 @@ func CombineScores(profile *LeetifyProfile, steamStats *CS2Stats, faceit *Faceit
 	leetifyScore := -1.0
 	if profile != nil {
 		privacyMode = profile.PrivacyMode
-		scored := *profile
-		if faceit != nil {
-			// Faceit knows its own ranks best; Leetify's copy can be stale.
-			elo := faceit.Elo
-			scored.Ranks.FaceitElo = &elo
-			scored.Ranks.Faceit = faceit.Level
-		}
-		leetifyScore = ComputeSkillScore(&scored)
+		leetifyScore = ComputeSkillScore(profile, faceit)
 	}
 
 	blend := func(primary, steamWeight float64) *float64 {

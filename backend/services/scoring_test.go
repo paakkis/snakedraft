@@ -7,7 +7,7 @@ import (
 
 func TestComputeSkillScore_PrivateProfile(t *testing.T) {
 	p := &LeetifyProfile{PrivacyMode: "private"}
-	score := ComputeSkillScore(p)
+	score := ComputeSkillScore(p, nil)
 	if score != -1 {
 		t.Errorf("expected -1 for private profile, got %f", score)
 	}
@@ -16,7 +16,7 @@ func TestComputeSkillScore_PrivateProfile(t *testing.T) {
 func TestComputeSkillScore_EmptyPublicProfile(t *testing.T) {
 	// Public but without any stats: there is nothing to score.
 	p := &LeetifyProfile{PrivacyMode: "public"}
-	if score := ComputeSkillScore(p); score != -1 {
+	if score := ComputeSkillScore(p, nil); score != -1 {
 		t.Errorf("expected -1 for a profile without stats, got %f", score)
 	}
 }
@@ -56,7 +56,7 @@ func TestComputeSkillScore_MaxProfile(t *testing.T) {
 			{LeetifyRating: 0.3, DataSource: "valve"},
 		},
 	}
-	score := ComputeSkillScore(p)
+	score := ComputeSkillScore(p, nil)
 	if score < 90 {
 		t.Errorf("expected near-max score for max-stat profile, got %f", score)
 	}
@@ -83,20 +83,20 @@ func TestComputeSkillScore_FaceitLevelFallback(t *testing.T) {
 	// Without raw ELO, a typical ELO for the level is used: level 5 ≈ 1125 → 37.5.
 	p := &LeetifyProfile{PrivacyMode: "public"}
 	p.Ranks.Faceit = 5
-	if got := ComputeSkillScore(p); math.Abs(got-37.5) > 0.01 {
+	if got := ComputeSkillScore(p, nil); math.Abs(got-37.5) > 0.01 {
 		t.Errorf("level-5 fallback: got %v, want 37.5", got)
 	}
 
 	// Level 10 without an ELO must not be treated as the best player alive.
 	p.Ranks.Faceit = 10
-	if got := ComputeSkillScore(p); got < 65 || got > 80 {
+	if got := ComputeSkillScore(p, nil); got < 65 || got > 80 {
 		t.Errorf("level-10 fallback: got %v, want a just-reached-level-10 score (65–80)", got)
 	}
 
 	// Raw ELO wins over level when both are present: 2250/3000 → 75.
 	elo := 2250
 	p.Ranks.FaceitElo = &elo
-	if got := ComputeSkillScore(p); math.Abs(got-75) > 0.01 {
+	if got := ComputeSkillScore(p, nil); math.Abs(got-75) > 0.01 {
 		t.Errorf("elo should take precedence: got %v, want 75", got)
 	}
 }
@@ -115,7 +115,7 @@ func fullProfile() *LeetifyProfile {
 }
 
 func TestComputeSkillScore_MissingSourceIsNotPenalised(t *testing.T) {
-	want := ComputeSkillScore(fullProfile())
+	want := ComputeSkillScore(fullProfile(), nil)
 	if math.Abs(want-60) > 0.01 {
 		t.Fatalf("baseline profile: got %v, want 60", want)
 	}
@@ -133,7 +133,7 @@ func TestComputeSkillScore_MissingSourceIsNotPenalised(t *testing.T) {
 	for name, strip := range cases {
 		p := fullProfile()
 		strip(p)
-		if got := ComputeSkillScore(p); math.Abs(got-want) > 0.01 {
+		if got := ComputeSkillScore(p, nil); math.Abs(got-want) > 0.01 {
 			t.Errorf("%s: score changed from %v to %v", name, want, got)
 		}
 	}
@@ -146,13 +146,13 @@ func TestComputeSkillScore_BestRankCounts(t *testing.T) {
 	p := fullProfile()
 	p.Ranks.FaceitElo = &elo
 	p.Ranks.Premier = 0
-	if got := ComputeSkillScore(p); math.Abs(got-82) > 0.01 {
+	if got := ComputeSkillScore(p, nil); math.Abs(got-82) > 0.01 {
 		t.Errorf("Faceit only: got %v, want 82", got)
 	}
 
 	// A weaker Premier rating does not pull the score down…
 	p.Ranks.Premier = 21000
-	if got := ComputeSkillScore(p); math.Abs(got-82) > 0.01 {
+	if got := ComputeSkillScore(p, nil); math.Abs(got-82) > 0.01 {
 		t.Errorf("Faceit + weaker Premier: got %v, want 82", got)
 	}
 
@@ -160,7 +160,7 @@ func TestComputeSkillScore_BestRankCounts(t *testing.T) {
 	low := 900
 	p.Ranks.FaceitElo = &low
 	p.Ranks.Premier = 35000
-	if got := ComputeSkillScore(p); math.Abs(got-82) > 0.01 {
+	if got := ComputeSkillScore(p, nil); math.Abs(got-82) > 0.01 {
 		t.Errorf("Premier + weaker Faceit: got %v, want 82", got)
 	}
 }
@@ -174,9 +174,9 @@ func TestComputeSkillScore_BetterStatsScoreHigher(t *testing.T) {
 	strong.Ranks.Premier = 20000
 	strong.Rating.Aim = 80
 
-	if ComputeSkillScore(strong) <= ComputeSkillScore(weak) {
+	if ComputeSkillScore(strong, nil) <= ComputeSkillScore(weak, nil) {
 		t.Errorf("stronger profile must score higher: strong=%v weak=%v",
-			ComputeSkillScore(strong), ComputeSkillScore(weak))
+			ComputeSkillScore(strong, nil), ComputeSkillScore(weak, nil))
 	}
 }
 
@@ -202,7 +202,7 @@ func TestComputeSteamScore(t *testing.T) {
 func TestCombineScores(t *testing.T) {
 	public := &LeetifyProfile{PrivacyMode: "public"}
 	public.Rating.Aim = 100
-	leetify := ComputeSkillScore(public) // 18.2
+	leetify := ComputeSkillScore(public, nil) // 18.2
 	private := &LeetifyProfile{PrivacyMode: "private"}
 	steam := &CS2Stats{KDRatio: 1.25, WinRate: 50, HSPercent: 30, Accuracy: 15, MVPRate: 1, HoursPlayed: 1250} // 50
 	faceit := &FaceitPlayer{Elo: 2400, Level: 10}                                                               // 80
