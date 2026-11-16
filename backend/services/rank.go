@@ -239,7 +239,12 @@ func performanceOf(f *FaceitPlayer) *FaceitPerformance {
 
 // faceitMatchRating rates a single Faceit match from 0 to 1 on K/D (0.6–1.4)
 // and ADR (50–100), equally weighted. 0.5 is an average player in the lobby.
+// Faceit has no ADR for older matches (it is then 0): those are rated on K/D
+// alone.
 func faceitMatchRating(kd, adr float64) float64 {
+	if adr <= 0 {
+		return normalize(kd, 0.6, 1.4)
+	}
 	return (normalize(kd, 0.6, 1.4) + normalize(adr, 50, 100)) / 2
 }
 

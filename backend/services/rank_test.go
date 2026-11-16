@@ -289,6 +289,7 @@ func TestFaceitMatchRating(t *testing.T) {
 		{0.6, 50, 0},
 		{3.0, 150, 1}, // clamped
 		{1.4, 50, 0.5},
+		{1.2, 0, 0.75}, // no ADR for the match: K/D alone
 	}
 	for _, c := range cases {
 		if got := faceitMatchRating(c.kd, c.adr); !near(got, c.want) {
