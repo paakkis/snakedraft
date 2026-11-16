@@ -1,7 +1,30 @@
 import { create } from 'zustand'
-import type { Tournament, Team, Draft, DraftSettings } from '../types'
+import type { Tournament, Team, Draft, DraftScore, DraftSettings, Player, RankCheck, ScorePreview } from '../types'
 import * as api from '../api/client'
 import { averageScore } from '../lib/stats'
+import { DEFAULT_SETTINGS, isFullModel } from '../lib/draftSettings'
+
+type Scoring = { settings: DraftSettings; preview: ScorePreview | null }
+
+/**
+ * The score a player has under the selected draft settings, or undefined when
+ * they cannot be scored. With the full model that is the score they were
+ * loaded with. Until the first preview for other settings has arrived, the
+ * full model's scores stand in.
+ */
+export const scoreOf = (s: Scoring, p: Player): DraftScore | undefined => {
+  if (!isFullModel(s.settings) && s.preview) return s.preview.scores[p.id]
+  return p.skill_score != null && p.skill_score >= 0 ? { score: p.skill_score } : undefined
+}
+
+/** How the selected settings assess a player's rank. */
+export const rankCheckOf = (s: Scoring, p: Player): RankCheck | undefined =>
+  !isFullModel(s.settings) && s.preview ? s.preview.rank_checks[p.id] : p.rank_check
+
+// Typing in a weight field should not fire a request per keystroke
+const PREVIEW_DELAY_MS = 200
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+let previewRun = 0
 
 /** The draft that is open: the chosen one, or else the newest. */
 export const activeDraftOf = (s: { tournament: Tournament | null; activeDraftId: string | null }): Draft | undefined => {
@@ -29,6 +52,13 @@ interface TournamentStore {
   requestError: string | null
   draftError: string | null
   activeDraftId: string | null
+  // The settings the next draft is made with. The player list shows the
+  // scores they give: `preview` holds them unless they are the full model's.
+  settings: DraftSettings
+  preview: ScorePreview | null
+  previewPending: boolean
+  setSettings: (settings: DraftSettings) => void
+  refreshPreview: () => Promise<void>
 
   addTeammateRequest: (requesterId: string, requestedId: string) => Promise<boolean>
   removeTeammateRequest: (requestId: string) => Promise<void>
@@ -55,13 +85,49 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
   requestError: null,
   draftError: null,
   activeDraftId: null,
+  settings: DEFAULT_SETTINGS,
+  preview: null,
+  previewPending: false,
   refreshingIds: [],
+
+  setSettings: (settings) => {
+    set({ settings })
+    clearTimeout(previewTimer)
+    if (isFullModel(settings)) {
+      previewRun++ // drop any answer still on its way
+      set({ preview: null, previewPending: false })
+      return
+    }
+    set({ previewPending: true })
+    previewTimer = setTimeout(() => get().refreshPreview(), PREVIEW_DELAY_MS)
+  },
+
+  // Scores every player with the selected settings. Called when the settings
+  // or the players change. Only the latest answer is kept.
+  refreshPreview: async () => {
+    const { tournament, settings } = get()
+    if (!tournament || isFullModel(settings)) {
+      set({ preview: null, previewPending: false })
+      return
+    }
+    const run = ++previewRun
+    set({ previewPending: true })
+    try {
+      const preview = await api.previewScores(tournament.id, settings)
+      if (run === previewRun) {
+        set({ preview: { scores: preview.scores ?? {}, rank_checks: preview.rank_checks ?? {} }, previewPending: false })
+      }
+    } catch (e) {
+      if (run === previewRun) set({ draftError: (e as Error).message, previewPending: false })
+    }
+  },
 
   clearError: () => set({ error: null }),
 
   reset: () => set({
     tournament: null, loading: false, addingPlayer: false, error: null,
     requestError: null, draftError: null, activeDraftId: null,
+    settings: DEFAULT_SETTINGS, preview: null, previewPending: false,
   }),
 
   createTournament: async (name, teamSize) => {
@@ -80,7 +146,8 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const tournament = await api.getTournament(id)
-      set({ tournament: normalise(tournament), requestError: null, draftError: null })
+      set({ tournament: normalise(tournament), requestError: null, draftError: null, preview: null })
+      get().refreshPreview()
     } catch (e) {
       set({ error: (e as Error).message })
     } finally {
@@ -101,6 +168,7 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
           ),
         },
       }))
+      get().refreshPreview()
       return true
     } catch (e) {
       set({ error: (e as Error).message })
@@ -128,6 +196,7 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
     try {
       const fresh = await api.getTournament(tournament.id)
       set({ tournament: normalise(fresh) })
+      get().refreshPreview()
     } catch (e) {
       set({ error: (e as Error).message })
     }

@@ -57,7 +57,13 @@ A tournament can hold any number of drafts. Each one is made with its own
 settings and kept next to the others, so you can draft the same players in
 different ways and see what changes.
 
-The draft panel has four presets:
+The settings panel sits above the player list, and the list follows it: the
+Score column shows what every player scores with the settings that are
+selected, with the full model's score in grey next to it. So what you see in
+the list is what the next draft is made on. Nothing is fetched for this, the
+scores come from the stats that are already stored.
+
+The panel has four presets:
 
 | Preset | Scores players on |
 | --- | --- |
@@ -78,7 +84,8 @@ draft instead.
 
 Each draft has a tab with its teams, on the scores it was made with. Those
 scores are stored with the draft, so it stays what it was when players are
-refreshed later. "Compare all" puts the drafts side by side: their settings,
+refreshed later. "Use these settings" on a draft loads its settings back into
+the panel. "Compare all" puts the drafts side by side: their settings,
 the spread on their own scores, the spread when the same teams are measured
 with the full model, how many teammate requests were kept, and which team
 every player is on in each draft.

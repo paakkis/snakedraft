@@ -115,6 +115,12 @@ export interface DraftScore {
   estimated?: boolean   // the settings could not score the player; the full model stood in
 }
 
+/** What every player would score with some settings, without drafting anything. */
+export interface ScorePreview {
+  scores: Record<string, DraftScore>      // by player id; missing = cannot be scored
+  rank_checks: Record<string, RankCheck>  // by player id, for players scored on a rank
+}
+
 /** One set of teams, with the settings and scores it was made with. */
 export interface Draft {
   id: string

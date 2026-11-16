@@ -110,6 +110,9 @@ function sameScore(a: ScoreSettings, b: ScoreSettings): boolean {
 export const matchPreset = (s: ScoreSettings): Preset | undefined =>
   PRESETS.find(p => sameScore(p.score, s))
 
+/** Do these settings give every player the score the player list is loaded with? */
+export const isFullModel = (s: ScoreSettings): boolean => matchPreset(s)?.id === 'full'
+
 /** Can these settings score anyone at all? */
 export function canScore(s: ScoreSettings): boolean {
   const ranked = (s.use_faceit || s.use_premier) && s.weight_rank > 0

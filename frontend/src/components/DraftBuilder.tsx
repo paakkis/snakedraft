@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { DraftSettings } from '../types'
-import { useTournamentStore } from '../store/tournament'
+import { scoreOf, useTournamentStore } from '../store/tournament'
 import {
   DEFAULT_SETTINGS, PRESETS, WEIGHTS,
   canScore, describeSettings, freeDraftName, matchPreset, weightShare,
@@ -39,39 +39,48 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 const toPoints = (w: number) => +(w * 100).toFixed(2)
 const fromPoints = (v: string) => Math.min(Math.max(Number(v) || 0, 0), 1000) / 100
 
-/** Settings for a new draft. Every draft made here is kept next to the others. */
+/**
+ * The settings the next draft is made with. The player list below shows the
+ * scores they give, so what you see there is what gets drafted. Every draft
+ * made here is kept next to the others.
+ */
 export default function DraftBuilder() {
-  const { tournament, createDraft, loading, draftError } = useTournamentStore()
-  const [settings, setSettings] = useState<DraftSettings>(DEFAULT_SETTINGS)
+  const {
+    tournament, createDraft, loading, draftError,
+    settings, setSettings, preview, previewPending,
+  } = useTournamentStore()
   const [name, setName] = useState('')
   const [open, setOpen] = useState(false)
 
   if (!tournament) return null
 
   const set = <K extends keyof DraftSettings>(key: K, value: DraftSettings[K]) =>
-    setSettings(s => ({ ...s, [key]: value }))
+    setSettings({ ...settings, [key]: value })
 
   const preset = matchPreset(settings)
   const autoName = freeDraftName(preset?.label ?? 'Custom', tournament.drafts)
   const ranked = settings.use_faceit || settings.use_premier
   const usable = canScore(settings)
 
-  // An estimate from the player list. The server has the final say, since
-  // custom settings can score fewer players than the full model does.
-  const scored = tournament.players.filter(p => p.skill_score != null && p.skill_score >= 0).length
+  const scores = tournament.players.map(p => scoreOf({ settings, preview }, p))
+  const scored = scores.filter(Boolean).length
+  const estimated = scores.filter(s => s?.estimated).length
   const size = tournament.team_size
   const teamsPossible = Math.floor(scored / size)
   const benched = scored - teamsPossible * size
 
   const create = async () => {
-    if (await createDraft(name.trim() || autoName, settings)) setName('')
+    if (await createDraft(name.trim() || autoName, settings)) {
+      setName('')
+      document.getElementById('drafts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
   }
 
   return (
-    <div className="panel">
+    <div id="draft-settings" className="panel scroll-mt-4">
       <div className="px-3 py-2.5 flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
-          <h2 className="panel-title">New draft</h2>
+          <h2 className="panel-title">Draft settings</h2>
           <div className="flex rounded border border-zinc-700 overflow-hidden text-xs" role="group" aria-label="Preset">
             {PRESETS.map(p => (
               <button
@@ -79,7 +88,7 @@ export default function DraftBuilder() {
                 type="button"
                 title={p.hint}
                 aria-pressed={preset?.id === p.id}
-                onClick={() => setSettings(s => ({ ...s, ...p.score }))}
+                onClick={() => setSettings({ ...settings, ...p.score })}
                 className={`px-2.5 py-1 border-r border-zinc-700 last:border-r-0 ${
                   preset?.id === p.id ? 'bg-zinc-700 text-zinc-50' : 'text-zinc-400 hover:text-zinc-100'
                 }`}
@@ -95,7 +104,7 @@ export default function DraftBuilder() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-zinc-400">
+          <span className={`text-sm text-zinc-400 ${previewPending ? 'opacity-50' : ''}`}>
             {teamsPossible >= 2 ? (
               <>
                 <span className="text-zinc-100 font-medium">{teamsPossible} teams</span> of {size}
@@ -116,7 +125,7 @@ export default function DraftBuilder() {
           />
           <button
             onClick={create}
-            disabled={loading || teamsPossible < 2 || !usable}
+            disabled={loading || previewPending || teamsPossible < 2 || !usable}
             title={usable ? undefined : 'These settings leave nothing to score players on'}
             className="btn-primary"
           >
@@ -127,7 +136,10 @@ export default function DraftBuilder() {
 
       <p className="px-3 pb-2.5 -mt-1 text-xs text-zinc-500">
         {describeSettings(settings).join(' · ')}
-        {tournament.drafts.length > 0 && ' · existing drafts are kept, so you can compare'}
+        <span className="text-zinc-600">
+          {' · '}the player list shows the scores these settings give
+          {estimated > 0 && `, ${estimated} of them from the full model (~)`}
+        </span>
       </p>
 
       {draftError && <p className="notice-error mx-3 mb-3">{draftError}</p>}

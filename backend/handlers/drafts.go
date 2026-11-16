@@ -67,7 +67,7 @@ func (h *Handler) CreateDraft(c *gin.Context) {
 	}
 
 	// 1. Score
-	scores, err := scorePlayers(h.db, tournamentID, settings)
+	scores, _, err := scorePlayers(h.db, tournamentID, settings)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -245,19 +245,51 @@ func (h *Handler) DeleteDraft(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// POST /api/tournaments/:id/scores
+// Body: { "settings": { ... } }
+//
+// Scores every player with the given settings without drafting anything, so
+// the player list can show what a draft with those settings would be made on.
+// Nothing is fetched: the scores come from the stored stats.
+func (h *Handler) PreviewScores(c *gin.Context) {
+	var body struct {
+		Settings json.RawMessage `json:"settings"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	settings := services.DefaultDraftSettings()
+	if len(body.Settings) > 0 {
+		if err := json.Unmarshal(body.Settings, &settings); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid settings: " + err.Error()})
+			return
+		}
+	}
+	scores, checks, err := scorePlayers(h.db, c.Param("id"), settings.Sanitized())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"scores": scores, "rank_checks": checks})
+}
+
 // scorePlayers scores every player of a tournament from their stored stats
-// with the given settings. Players who cannot be scored are left out.
-func scorePlayers(db *sql.DB, tournamentID string, settings services.DraftSettings) (map[string]models.DraftScore, error) {
+// with the given settings. Players who cannot be scored are left out. It
+// also returns how the rank of each scored player was assessed, for those
+// scored on a rank.
+func scorePlayers(db *sql.DB, tournamentID string, settings services.DraftSettings) (map[string]models.DraftScore, map[string]*models.RankCheck, error) {
 	rows, err := db.Query(`
 		SELECT id, skill_score, raw_stats, steam_stats, faceit_stats
 		FROM players WHERE tournament_id=$1`,
 		tournamentID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
+	checks := map[string]*models.RankCheck{}
 	usesFullModel := settings.ScoreSettings == services.DefaultScoreSettings()
 	scores := map[string]models.DraftScore{}
 	for rows.Next() {
@@ -265,7 +297,7 @@ func scorePlayers(db *sql.DB, tournamentID string, settings services.DraftSettin
 		var stored *float64
 		var leetifyRaw, steamRaw, faceitRaw []byte
 		if err := rows.Scan(&id, &stored, &leetifyRaw, &steamRaw, &faceitRaw); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		leetify := unmarshalOrNil[services.LeetifyProfile](leetifyRaw)
 		steam := unmarshalOrNil[services.CS2Stats](steamRaw)
@@ -282,14 +314,22 @@ func scorePlayers(db *sql.DB, tournamentID string, settings services.DraftSettin
 			score, _ = settings.Combine(leetify, steam, faceit)
 		}
 
+		// The rank is assessed by whichever model the score came from.
+		used := settings.ScoreSettings
 		switch {
 		case score != nil && *score >= 0:
 			scores[id] = models.DraftScore{Score: *score}
 		case settings.FallbackToFullModel && full != nil && *full >= 0:
 			scores[id] = models.DraftScore{Score: *full, Estimated: true}
+			used = services.DefaultScoreSettings()
+		default:
+			continue
+		}
+		if check := rankCheck(used, leetify, faceit); check != nil && used.WeightRank > 0 {
+			checks[id] = check
 		}
 	}
-	return scores, rows.Err()
+	return scores, checks, rows.Err()
 }
 
 // loadDrafts fetches every draft of a tournament, oldest first.

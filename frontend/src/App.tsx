@@ -101,9 +101,9 @@ export default function App() {
               <h2 className="panel-title mb-2">Add players</h2>
               <PlayerInput />
             </div>
+            {tournament.players.length >= 2 && <DraftBuilder />}
             <PlayerList />
             {tournament.players.length >= 2 && <TeammateRequests />}
-            {tournament.players.length >= 2 && <DraftBuilder />}
             <DraftView />
           </div>
         )}

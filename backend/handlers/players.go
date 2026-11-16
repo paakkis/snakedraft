@@ -394,24 +394,33 @@ func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats 
 		}
 	}
 
-	if rank := services.AssessRank(profile, faceit); rank.Value > 0 {
-		p.RankCheck = &models.RankCheck{
-			Source:           rank.Source,
-			Confidence:       rank.Confidence,
-			Listed:           rank.Listed * 100,
-			Adjusted:         rank.Value * 100,
-			Underrated:       rank.Underrated,
-			Mechanics:        rank.Mechanics * 100,
-			TypicalMechanics: rank.TypicalMechanics * 100,
-			Outperforming:    rank.Outperforming,
-		}
-		if rank.Matches != services.UnknownMatches {
-			p.RankCheck.Matches = &rank.Matches
-		}
-		if faceit != nil && faceit.Performance != nil {
-			p.RankCheck.ImpliedElo = faceit.Performance.ImpliedElo
-			p.RankCheck.LobbyElo = faceit.Performance.LobbyElo
-			p.RankCheck.PerformanceMatches = faceit.Performance.Matches
-		}
+	p.RankCheck = rankCheck(services.DefaultScoreSettings(), profile, faceit)
+}
+
+// rankCheck says how the given settings assess a player's rank, or nil when
+// they score the player on no rank at all.
+func rankCheck(settings services.ScoreSettings, profile *services.LeetifyProfile, faceit *services.FaceitPlayer) *models.RankCheck {
+	rank := settings.AssessRank(profile, faceit)
+	if rank.Value <= 0 {
+		return nil
 	}
+	check := &models.RankCheck{
+		Source:           rank.Source,
+		Confidence:       rank.Confidence,
+		Listed:           rank.Listed * 100,
+		Adjusted:         rank.Value * 100,
+		Underrated:       rank.Underrated,
+		Mechanics:        rank.Mechanics * 100,
+		TypicalMechanics: rank.TypicalMechanics * 100,
+		Outperforming:    rank.Outperforming,
+	}
+	if rank.Matches != services.UnknownMatches {
+		check.Matches = &rank.Matches
+	}
+	if faceit != nil && faceit.Performance != nil {
+		check.ImpliedElo = faceit.Performance.ImpliedElo
+		check.LobbyElo = faceit.Performance.LobbyElo
+		check.PerformanceMatches = faceit.Performance.Matches
+	}
+	return check
 }

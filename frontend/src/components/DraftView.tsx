@@ -135,7 +135,7 @@ const teamsAsText = (teams: Team[]) =>
 
 /** The teams of one draft, with drag and drop between them. */
 function DraftTeams({ draft }: { draft: Draft }) {
-  const { tournament, movePlayer, renameDraft, deleteDraft } = useTournamentStore()
+  const { tournament, movePlayer, renameDraft, deleteDraft, setSettings } = useTournamentStore()
   const [active, setActive] = useState<Player | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
@@ -183,6 +183,16 @@ function DraftTeams({ draft }: { draft: Draft }) {
         </div>
         <div className="flex items-center gap-1">
           <span className="text-xs text-zinc-500 mr-1">Drag players to move them</span>
+          <button
+            onClick={() => {
+              setSettings(draft.settings)
+              document.getElementById('draft-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+            className="btn-quiet"
+            title="Load this draft's settings into the settings panel, so the player list shows the scores they give now"
+          >
+            Use these settings
+          </button>
           <button onClick={rename} className="btn-quiet">Rename</button>
           <button onClick={remove} className="btn-quiet hover:!text-red-400">Delete</button>
           <CopyButton text={() => teamsAsText(teams)} className="btn ml-1" title="Copy teams as text">
@@ -258,7 +268,7 @@ export default function DraftView() {
     }`
 
   return (
-    <div className="flex flex-col gap-3">
+    <div id="drafts" className="flex flex-col gap-3 scroll-mt-4">
       <div className="flex items-end gap-3 border-b border-zinc-700">
         <h2 className="panel-title pb-2">Drafts <span className="text-zinc-600">{drafts.length}</span></h2>
         <div className="flex items-end gap-1 overflow-x-auto -mb-px" role="tablist">

@@ -44,6 +44,7 @@ func main() {
 		api.POST("/tournaments/:id/requests", h.CreateTeammateRequest)
 		api.DELETE("/tournaments/:id/requests/:rid", h.DeleteTeammateRequest)
 
+		api.POST("/tournaments/:id/scores", h.PreviewScores)
 		api.POST("/tournaments/:id/drafts", h.CreateDraft)
 		api.PATCH("/tournaments/:id/drafts/:did", h.RenameDraft)
 		api.DELETE("/tournaments/:id/drafts/:did", h.DeleteDraft)
