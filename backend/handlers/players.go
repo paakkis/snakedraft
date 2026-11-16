@@ -386,13 +386,14 @@ func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats 
 
 	if rank := services.AssessRank(profile, faceit); rank.Value > 0 {
 		p.RankCheck = &models.RankCheck{
-			Source:        rank.Source,
-			Confidence:    rank.Confidence,
-			Listed:        rank.Listed * 100,
-			Adjusted:      rank.Value * 100,
-			Underrated:    rank.Underrated,
-			Mechanics:     rank.Mechanics * 100,
-			Outperforming: rank.Outperforming,
+			Source:           rank.Source,
+			Confidence:       rank.Confidence,
+			Listed:           rank.Listed * 100,
+			Adjusted:         rank.Value * 100,
+			Underrated:       rank.Underrated,
+			Mechanics:        rank.Mechanics * 100,
+			TypicalMechanics: rank.TypicalMechanics * 100,
+			Outperforming:    rank.Outperforming,
 		}
 		if rank.Matches != services.UnknownMatches {
 			p.RankCheck.Matches = &rank.Matches

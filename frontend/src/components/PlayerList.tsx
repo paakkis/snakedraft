@@ -114,7 +114,10 @@ function RankFlags({ player }: { player: Player }) {
     )
   }
   if (c.underrated && c.mechanics) {
-    better.push(`Aim and positioning (${c.mechanics.toFixed(0)}) are well above the ${platform} rank (${c.listed.toFixed(0)})`)
+    better.push(
+      `Aim and positioning (${c.mechanics.toFixed(0)}) are well above what is typical for the ${platform} rank`
+      + (c.typical_mechanics ? ` (${c.typical_mechanics.toFixed(0)})` : ''),
+    )
   }
   const betterTitle = better.length
     ? `Probably better than the rank shows. ${better.join('. ')}. Scored on a rank of ${c.adjusted.toFixed(0)}.`

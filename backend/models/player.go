@@ -59,9 +59,11 @@ type RankCheck struct {
 	// player is scored on.
 	Listed   float64 `json:"listed"`
 	Adjusted float64 `json:"adjusted"`
-	// Underrated: aim and positioning sit well above the rank.
-	Underrated bool    `json:"underrated"`
-	Mechanics  float64 `json:"mechanics,omitempty"`
+	// Underrated: aim and positioning (Mechanics) sit well above what is
+	// typical for the rank (TypicalMechanics).
+	Underrated       bool    `json:"underrated"`
+	Mechanics        float64 `json:"mechanics,omitempty"`
+	TypicalMechanics float64 `json:"typical_mechanics,omitempty"`
 	// Outperforming: the player keeps performing like a clearly higher
 	// Faceit ELO than their own, given the lobbies they play in.
 	Outperforming      bool    `json:"outperforming"`

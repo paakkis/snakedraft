@@ -43,8 +43,9 @@ export interface RankCheck {
   matches?: number            // matches behind the rank, if known
   listed: number              // rank as the platform shows it, 0–100
   adjusted: number            // rank the player is scored on, 0–100
-  underrated: boolean         // aim and positioning sit well above the rank
+  underrated: boolean         // aim and positioning sit well above what is typical for the rank
   mechanics?: number          // 0–100
+  typical_mechanics?: number  // 0–100, what mechanics usually is at this rank
   outperforming: boolean      // performs like a clearly higher Faceit ELO
   implied_elo?: number
   lobby_elo?: number

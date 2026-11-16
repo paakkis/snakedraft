@@ -21,9 +21,16 @@ const (
 )
 
 const (
+	// mechanicsBase and mechanicsSlope give the aim and positioning that are
+	// typical for a rank (both 0–1): 0.40 + 0.45 · rank. Mechanics spread
+	// over a much narrower range than ranks do. Players with a low rank
+	// still aim at around 0.55, so comparing the two numbers directly makes
+	// every low-ranked player look underrated.
+	mechanicsBase  = 0.40
+	mechanicsSlope = 0.45
+
 	// mechanicsTolerance is how far the measured mechanics may sit above the
-	// rank before the rank is questioned. Among settled players the two stay
-	// within a few points of each other, with mechanics usually the lower.
+	// typical ones for the rank before the rank is questioned.
 	mechanicsTolerance = 0.05
 
 	// mechanicsPull is the share of the gap beyond the tolerance that the
@@ -88,7 +95,9 @@ type RankAssessment struct {
 	// Mechanics is the player's measured aim and positioning (0–1), or 0
 	// when Leetify has no ratings for them.
 	Mechanics float64
-	// Underrated is set when the mechanics sit well above the listed rank.
+	// TypicalMechanics is what Mechanics usually is at this rank.
+	TypicalMechanics float64
+	// Underrated is set when the mechanics sit well above the typical ones.
 	Underrated bool
 	// Outperforming is set when a player keeps performing like a clearly
 	// higher Faceit ELO than their own, given the lobbies they play in.
@@ -203,12 +212,14 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 
 	// Aim and positioning are measured per match and do not depend on who
 	// the player is matched against, so they show skill the rank has not
-	// caught up with yet. Only ever raises the rank: a rank above the
-	// mechanics is normal for players who win on game sense and teamwork.
+	// caught up with yet. They are compared with what is typical for the
+	// rank. Only ever raises the rank: mechanics below the typical ones are
+	// normal for players who win on game sense and teamwork.
 	if p != nil {
 		best.Mechanics = mechanics(p)
 	}
-	if gap := best.Mechanics - best.Value; best.Mechanics > 0 && gap > mechanicsTolerance {
+	best.TypicalMechanics = typicalMechanics(best.Value)
+	if gap := best.Mechanics - best.TypicalMechanics; best.Mechanics > 0 && gap > mechanicsTolerance {
 		best.Value = math.Min(1, best.Value+mechanicsPull*(gap-mechanicsTolerance))
 		best.Underrated = gap >= underratedGap
 	}
@@ -227,6 +238,11 @@ func formFreshness(lastPlayed *time.Time) float64 {
 		return 1
 	}
 	return math.Pow(0.5, float64(age)/float64(performanceHalfLife))
+}
+
+// typicalMechanics is the aim and positioning usually seen at a rank (0–1).
+func typicalMechanics(rank float64) float64 {
+	return mechanicsBase + mechanicsSlope*rank
 }
 
 // performanceOf returns a player's usable Faceit performance, or nil.

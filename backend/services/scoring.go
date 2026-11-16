@@ -26,8 +26,8 @@ const (
 // a rank earned over a handful of matches, or one not played for in a long
 // time, counts for less and the measured stats count for more. A Faceit ELO
 // is moved towards the one the player performed like against their recent
-// lobbies, and a rank that sits well below the player's aim and positioning
-// is raised part of the way towards them.
+// lobbies, and a rank whose player aims and positions clearly better than is
+// typical for it is raised.
 //
 // A player is never penalised for not being active on a platform: a missing
 // source is left out instead of counted as zero, and its weight is spread
