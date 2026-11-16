@@ -10,7 +10,6 @@ type Tournament struct {
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 	Players   []Player          `json:"players"`
-	Teams     []Team            `json:"teams"`
+	Drafts    []Draft           `json:"drafts"`
 	Requests  []TeammateRequest `json:"teammate_requests"`
-	Variance  *float64          `json:"variance,omitempty"`
 }
