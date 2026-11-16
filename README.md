@@ -37,6 +37,14 @@ positioning and utility ratings and recent form. Steam lifetime stats are only
 a small part, unless a player has nothing else. Missing data is left out
 instead of counted as zero.
 
+Leetify's public API only knows players who have signed up there. For anyone
+else the app falls back to the data behind the Leetify website, which covers
+their last 30 or so matches: ranks, aim, utility and average rating, but no
+positioning rating or opening duels. These players are marked with `*` in the
+Source column. That API is not documented or meant for outside use, so it can
+stop working at any time. When it does, those players are scored on Faceit and
+Steam as before.
+
 A rank is not taken at face value. It counts for less when there are few
 matches behind it or it has not been played for in a long time, and it is
 corrected when the player's stats say it is too low. See

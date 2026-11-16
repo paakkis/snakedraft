@@ -368,6 +368,7 @@ func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats 
 			TotalMatches:   profile.TotalMatches,
 			ReactionTimeMs: profile.Stats.ReactionTimeMs,
 			HeadAccuracy:   profile.Stats.AccuracyHead,
+			Partial:        profile.Partial,
 			OpeningDuels: (profile.Stats.CtOpeningDuelSuccessPercentage +
 				profile.Stats.TOpeningDuelSuccessPercentage) / 2,
 		}

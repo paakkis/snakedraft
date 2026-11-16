@@ -1,6 +1,7 @@
 package services
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,5 +109,92 @@ func TestFetchLeetifyProfile_PremierFallback(t *testing.T) {
 	current = "21000"
 	if p, err := FetchLeetifyProfile("1", ""); err != nil || p.Ranks.Premier != 21000 {
 		t.Errorf("a current rating must win over match history, got %+v (err %v)", p, err)
+	}
+}
+
+// Trimmed real responses from the API behind the Leetify website.
+const leetifySidebarFixture = `{"platforms":{
+  "faceit":{"latestGameFinishedAt":"2026-11-07T00:00:00.000Z","totalGames":1076,"nickname":"n","bannedAt":null,"latestElo":2129},
+  "matchmaking":{"latestGameFinishedAt":"2026-11-14T00:00:00.000Z","totalGames":null,"bannedAt":null,"isPrivate":false}},
+  "ranks":[
+    {"mapName":"de_dust2","dataSource":"matchmaking_competitive","latest":10,"max":10},
+    {"mapName":null,"dataSource":"faceit","latest":10,"max":10},
+    {"mapName":null,"dataSource":"matchmaking","latest":17188,"max":18594}]}`
+
+const leetifyRecentGamesFixture = `{"matchesPlayed":30,"winRate":0.6667,"aimRating":92.647,"leetifyRating":0.001,
+  "utilityRating":55.51,"ctLeetifyRating":0.003,"tLeetifyRating":-0.0008,
+  "accuracyEnemySpotted":38.5,"accuracyHead":20.0,"reactionTime":457.12,"kdRatio":1.04}`
+
+func TestFetchLeetifyProfile_WebsiteFallback(t *testing.T) {
+	fixClock(t, testNow)
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch {
+		case r.URL.Path == "/v3/profile" && r.URL.Query().Get("steam64_id") == "known":
+			w.Write([]byte(leetifyFixture))
+		case r.URL.Path == "/api/profile/765/sidebar-games":
+			if r.Header.Get("Authorization") != "" {
+				t.Error("the API key must not be sent to the website's API")
+			}
+			w.Write([]byte(leetifySidebarFixture))
+		case r.URL.Path == "/api/profile/765/recent-games/5v5":
+			w.Write([]byte(leetifyRecentGamesFixture))
+		case r.URL.Path == "/api/profile/empty/sidebar-games":
+			w.Write([]byte(`{"platforms":{},"ranks":[]}`))
+		case r.URL.Path == "/api/profile/empty/recent-games/5v5":
+			w.Write([]byte(`{"matchesPlayed":0}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	oldPublic, oldWeb := leetifyBaseURL, leetifyWebBaseURL
+	leetifyBaseURL, leetifyWebBaseURL = srv.URL, srv.URL
+	defer func() { leetifyBaseURL, leetifyWebBaseURL = oldPublic, oldWeb }()
+
+	// A player the public API has is never looked up on the website.
+	if p, err := FetchLeetifyProfile("known", "secret"); err != nil || p.Partial || len(paths) != 1 {
+		t.Fatalf("known player: %+v, %v, requests %v", p, err, paths)
+	}
+
+	p, err := FetchLeetifyProfile("765", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Partial || p.PrivacyMode != "public" {
+		t.Errorf("want a partial public profile, got %+v", p)
+	}
+	if p.Ranks.Premier != 17188 || p.Ranks.Faceit != 10 || p.Ranks.FaceitElo == nil || *p.Ranks.FaceitElo != 2129 {
+		t.Errorf("ranks: %+v", p.Ranks)
+	}
+	if p.Rating.Aim != 92.647 || p.Rating.Utility != 55.51 || p.Rating.Positioning != 0 {
+		t.Errorf("ratings: %+v", p.Rating)
+	}
+	if p.Stats.ReactionTimeMs != 457.12 || p.TotalMatches != 30 || p.Winrate != 0.6667 {
+		t.Errorf("stats: %+v", p)
+	}
+	if at, ok := PremierRatedAt(p); !ok || at.Format("2006-01-02") != "2026-11-14" {
+		t.Errorf("the last matchmaking game should date the Premier rating: %v, %v", at, ok)
+	}
+
+	// Aim alone is not held against the rank, and the average rating of the
+	// matches does not count as a Faceit or Premier match.
+	a := AssessRank(p, nil)
+	if a.Mechanics != 0 || a.Underrated || !near(a.Value, 2129.0/3000) || a.Matches != UnknownMatches {
+		t.Errorf("rank: %+v", a)
+	}
+	// Rank 0.70967 at 0.55, aim 0.92647 at 0.15, utility 0.5551 at 0.04,
+	// form (0.001 + 0.2) / 0.5 = 0.402 at 0.08.
+	want := (0.55*2129.0/3000 + 0.15*0.92647 + 0.04*0.5551 + 0.08*0.402) / 0.82 * 100
+	if got := ComputeSkillScore(p, nil); math.Abs(got-want) > 0.01 {
+		t.Errorf("score: got %v, want %v", got, want)
+	}
+
+	// Neither API knows the player, or the website's API is gone.
+	for _, id := range []string{"empty", "nobody"} {
+		if p, err := FetchLeetifyProfile(id, ""); p != nil || err == nil {
+			t.Errorf("%s: got (%v, %v), want not found", id, p, err)
+		}
 	}
 }

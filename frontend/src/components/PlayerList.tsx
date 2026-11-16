@@ -63,10 +63,14 @@ function StaleRank({ platform, lastPlayed, unknownNote }: {
 function source(p: Player): { label: string; className: string; title: string } {
   const hasScore = p.skill_score != null && p.skill_score >= 0
   if (p.privacy_mode === 'public' && hasScore) {
+    const partial = p.leetify?.partial
     return {
-      label: p.faceit ? 'Leetify + Faceit' : 'Leetify',
-      className: 'text-emerald-400',
-      title: 'Rank (Faceit or Premier) and Leetify stats' + (p.steam ? ', 5% Steam lifetime stats' : ''),
+      label: (p.faceit ? 'Leetify + Faceit' : 'Leetify') + (partial ? ' *' : ''),
+      className: partial ? 'text-teal-400' : 'text-emerald-400',
+      title: 'Rank (Faceit or Premier) and Leetify stats' + (p.steam ? ', 5% Steam lifetime stats' : '')
+        + (partial
+          ? `. * Leetify's public API does not have this player. Aim, utility and form are averages over their last ${p.leetify!.total_matches} matches as shown on the Leetify website. No positioning rating or opening duels.`
+          : ''),
     }
   }
   if (p.privacy_mode === 'faceit_only') {
@@ -342,15 +346,17 @@ export default function PlayerList() {
                     <td className="px-2 py-1.5 text-right whitespace-nowrap">
                       {p.rating
                         ? <span title={p.leetify
-                            ? `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · opening duels ${p.leetify.opening_duels.toFixed(0)}%`
+                            ? p.leetify.partial
+                              ? `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · last ${p.leetify.total_matches} matches`
+                              : `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · opening duels ${p.leetify.opening_duels.toFixed(0)}%`
                             : undefined}>
-                            {p.rating.aim.toFixed(0)} / {p.rating.positioning.toFixed(0)} / {p.rating.utility.toFixed(0)}
+                            {p.rating.aim.toFixed(0)} / {p.rating.positioning > 0 ? p.rating.positioning.toFixed(0) : '–'} / {p.rating.utility.toFixed(0)}
                           </span>
                         : num(undefined)}
                     </td>
                     <td
                       className="px-2 py-1.5 text-right"
-                      title={p.leetify ? `${p.leetify.total_matches.toLocaleString()} matches` : undefined}
+                      title={p.leetify ? `${p.leetify.partial ? 'Last ' : ''}${p.leetify.total_matches.toLocaleString()} matches` : undefined}
                     >
                       {num(winrate)}
                     </td>

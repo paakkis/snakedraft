@@ -16,6 +16,7 @@ export interface LeetifyStats {
   reaction_time_ms: number
   head_accuracy: number     // 0–100
   opening_duels: number     // 0–100
+  partial?: boolean         // from the Leetify website: last matches only, no positioning or opening duels
 }
 
 export interface SteamStats {

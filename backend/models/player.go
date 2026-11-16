@@ -24,6 +24,10 @@ type LeetifyStats struct {
 	ReactionTimeMs float64 `json:"reaction_time_ms"`
 	HeadAccuracy   float64 `json:"head_accuracy"` // 0–100
 	OpeningDuels   float64 `json:"opening_duels"` // avg CT+T opening duel win %, 0–100
+	// Partial: the public API does not have the player, and the stats are
+	// averages over their last matches as shown on the Leetify website.
+	// There is no positioning rating or opening duel percentage.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // SteamStats are lifetime CS2 stats from the Steam Web API.

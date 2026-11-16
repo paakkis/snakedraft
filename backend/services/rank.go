@@ -304,8 +304,13 @@ func summarisePerformance(matches []faceitMatch) *FaceitPerformance {
 const mechanicsAimShare = 0.6
 
 // mechanics is the average of a player's Leetify aim and positioning ratings
-// (0–1). 0 when neither is known.
+// (0–1). 0 when neither is known, and also for a partial profile: it has an
+// aim rating only, and aim alone runs well above the two together, so it
+// cannot be held against what is typical for a rank.
 func mechanics(p *LeetifyProfile) float64 {
+	if p.Partial {
+		return 0
+	}
 	var sum, weight float64
 	if p.Rating.Aim > 0 {
 		sum += p.Rating.Aim / 100 * mechanicsAimShare
