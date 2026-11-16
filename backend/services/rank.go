@@ -132,10 +132,16 @@ func rankConfidence(matches int, lastPlayed *time.Time) float64 {
 	return c
 }
 
-// AssessRank picks the rank a player is scored on (the better of Faceit and
-// Premier) and works out how much it can be trusted. Both arguments may be
-// nil. Faceit's own data wins over the copy Leetify holds, which can be stale.
+// AssessRank is ScoreSettings.AssessRank with the default settings.
 func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
+	return DefaultScoreSettings().AssessRank(p, f)
+}
+
+// AssessRank picks the rank a player is scored on (the better of Faceit and
+// Premier, of those the settings use) and works out how much it can be
+// trusted. Both arguments may be nil. Faceit's own data wins over the copy
+// Leetify holds, which can be stale.
+func (s ScoreSettings) AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	if p != nil && p.PrivacyMode != "public" {
 		p = nil
 	}
@@ -143,6 +149,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	var faceit, premier RankAssessment
 
 	switch {
+	case !s.UseFaceit:
 	case f != nil && f.Elo > 0:
 		faceit = RankAssessment{Source: RankSourceFaceit, Listed: normalizeFaceitElo(float64(f.Elo)), Matches: UnknownMatches}
 		if f.LifetimeMatches > 0 {
@@ -164,7 +171,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 		}
 	}
 
-	if p != nil && p.Ranks.Premier > 0 {
+	if s.UsePremier && p != nil && p.Ranks.Premier > 0 {
 		premier = RankAssessment{Source: RankSourcePremier, Listed: normalize(float64(p.Ranks.Premier), 0, 35000)}
 		premier.Matches, _ = leetifyMatches(p, isPremierMatch)
 		if at, ok := PremierRatedAt(p); ok {
@@ -182,7 +189,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	// works both ways. The matches are the player's latest ones, so they are
 	// exactly as old as the rank: a rank going stale is no reason to trust
 	// them more, and old matches pull less.
-	if perf := performanceOf(f); perf != nil {
+	if perf := performanceOf(f); perf != nil && s.UseFaceit && s.AdjustForPerformance {
 		m := float64(perf.Matches)
 		settled := rankConfidence(faceit.Matches, nil)
 		fresh := formFreshness(faceit.LastPlayed)
@@ -219,7 +226,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 		best.Mechanics = mechanics(p)
 	}
 	best.TypicalMechanics = typicalMechanics(best.Value)
-	if gap := best.Mechanics - best.TypicalMechanics; best.Mechanics > 0 && gap > mechanicsTolerance {
+	if gap := best.Mechanics - best.TypicalMechanics; s.AdjustForMechanics && best.Mechanics > 0 && gap > mechanicsTolerance {
 		best.Value = math.Min(1, best.Value+mechanicsPull*(gap-mechanicsTolerance))
 		best.Underrated = gap >= underratedGap
 	}
@@ -292,17 +299,21 @@ func summarisePerformance(matches []faceitMatch) *FaceitPerformance {
 	return &FaceitPerformance{Matches: n, ImpliedElo: implied / weightSum, LobbyElo: lobby / float64(n)}
 }
 
+// mechanicsAimShare is how much of the mechanics is aim, the rest being
+// positioning: the same 3 to 2 as their default weights in the skill score.
+const mechanicsAimShare = 0.6
+
 // mechanics is the average of a player's Leetify aim and positioning ratings
-// (0–1), weighted as in the skill score. 0 when neither is known.
+// (0–1). 0 when neither is known.
 func mechanics(p *LeetifyProfile) float64 {
 	var sum, weight float64
 	if p.Rating.Aim > 0 {
-		sum += p.Rating.Aim / 100 * weightAim
-		weight += weightAim
+		sum += p.Rating.Aim / 100 * mechanicsAimShare
+		weight += mechanicsAimShare
 	}
 	if p.Rating.Positioning > 0 {
-		sum += p.Rating.Positioning / 100 * weightPositioning
-		weight += weightPositioning
+		sum += p.Rating.Positioning / 100 * (1 - mechanicsAimShare)
+		weight += 1 - mechanicsAimShare
 	}
 	if weight == 0 {
 		return 0
