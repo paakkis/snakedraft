@@ -53,9 +53,15 @@ const (
 	// player who keeps performing above their lobbies.
 	performanceMinPull = 0.25
 
+	// performanceHalfLife is how long ago the matches can have been played
+	// before their pull on the rank halves. They show the form the player
+	// was in then, which says less and less about the form they are in now.
+	performanceHalfLife = 180 * 24 * time.Hour
+
 	// outperformingElo and outperformingMatches are the gap between implied
 	// and listed ELO, and the number of matches it must hold over, from
-	// which a player is flagged as underrated.
+	// which a player is flagged as underrated. The matches must also be
+	// newer than performanceHalfLife.
 	outperformingElo     = 150.0
 	outperformingMatches = 5
 )
@@ -162,14 +168,20 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	faceit.Value, premier.Value = faceit.Listed, premier.Listed
 
 	// Performance against the lobby moves the Faceit ELO towards the ELO the
-	// player performed like. The less settled the rank and the more matches
-	// the performance covers, the further it moves. This works both ways.
+	// player performed like. The fewer matches the rank was earned over and
+	// the more matches the performance covers, the further it moves. This
+	// works both ways. The matches are the player's latest ones, so they are
+	// exactly as old as the rank: a rank going stale is no reason to trust
+	// them more, and old matches pull less.
 	if perf := performanceOf(f); perf != nil {
 		m := float64(perf.Matches)
-		pull := (1 - (1-performanceMinPull)*faceit.Confidence) * m / (m + performanceSettleMatches)
+		settled := rankConfidence(faceit.Matches, nil)
+		fresh := formFreshness(faceit.LastPlayed)
+		pull := (1 - (1-performanceMinPull)*settled) * m / (m + performanceSettleMatches) * fresh
 		elo := float64(f.Elo)
 		faceit.Value = normalizeFaceitElo(elo + pull*(perf.ImpliedElo-elo))
-		faceit.Outperforming = perf.Matches >= outperformingMatches && perf.ImpliedElo-elo >= outperformingElo
+		faceit.Outperforming = fresh >= 0.5 &&
+			perf.Matches >= outperformingMatches && perf.ImpliedElo-elo >= outperformingElo
 	}
 
 	// A player is at least as good as their best platform shows; a low rank
@@ -201,6 +213,20 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 		best.Underrated = gap >= underratedGap
 	}
 	return best
+}
+
+// formFreshness is how much a player's latest Faceit matches still say about
+// their current form (0–1): it halves every performanceHalfLife since the
+// last one. 1 when it is not known when that was.
+func formFreshness(lastPlayed *time.Time) float64 {
+	if lastPlayed == nil {
+		return 1
+	}
+	age := timeNow().Sub(*lastPlayed)
+	if age <= 0 {
+		return 1
+	}
+	return math.Pow(0.5, float64(age)/float64(performanceHalfLife))
 }
 
 // performanceOf returns a player's usable Faceit performance, or nil.

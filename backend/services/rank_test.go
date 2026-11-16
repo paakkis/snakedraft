@@ -396,6 +396,43 @@ func TestAssessRank_PerformanceAgainstLobby(t *testing.T) {
 	}
 }
 
+func TestAssessRank_OldPerformanceCountsLess(t *testing.T) {
+	fixClock(t, testNow)
+	player := func(age time.Duration) *FaceitPlayer {
+		last := testNow.Add(-age)
+		return &FaceitPlayer{Elo: 1800, LifetimeMatches: 480,
+			Recent:      &FaceitRecent{Matches: 10, KDRatio: 1.4, ADR: 100, LastMatchAt: &last},
+			Performance: &FaceitPerformance{Matches: 10, ImpliedElo: 2300}}
+	}
+	// 480 matches → settled 0.96 → pull (1 − 0.75·0.96) · 10/15 = 0.18667.
+	const pull = (1 - 0.75*0.96) * 10.0 / 15
+
+	// Played yesterday: the full pull, and flagged.
+	a := AssessRank(nil, player(24*time.Hour))
+	if math.Abs(a.Value-(1800+pull*500)/3000) > 1e-3 || !a.Outperforming {
+		t.Errorf("fresh matches: got %+v", a)
+	}
+
+	// One half-life ago: half the pull.
+	a = AssessRank(nil, player(performanceHalfLife))
+	if !near(a.Value, (1800+pull*0.5*500)/3000) {
+		t.Errorf("matches one half-life old: got %v", a.Value)
+	}
+
+	// 20 months ago: the rank barely moves and the player is not flagged,
+	// even though the stale rank itself has lost most of its confidence.
+	a = AssessRank(nil, player(600*24*time.Hour))
+	if a.Value-a.Listed > 0.004 || a.Outperforming {
+		t.Errorf("20-month-old matches must not matter: got %+v", a)
+	}
+
+	// The same goes for the recent form of a Faceit-only player.
+	fresh, old := ComputeFaceitScore(player(24*time.Hour)), ComputeFaceitScore(player(600*24*time.Hour))
+	if old > 62 || fresh < 70 {
+		t.Errorf("old form must count for less: fresh=%v old=%v", fresh, old)
+	}
+}
+
 func TestComputeFaceitScore_PerformanceAgainstLobby(t *testing.T) {
 	fixClock(t, testNow)
 

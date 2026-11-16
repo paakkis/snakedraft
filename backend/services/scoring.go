@@ -138,11 +138,13 @@ func faceitEloOf(p *LeetifyProfile) float64 {
 // confidence here: the only thing it could shift to is the recent form, and
 // K/D and ADR depend on how strong the lobbies were.
 //
-// Without recent matches the ELO stands alone.
+// Without recent matches the ELO stands alone, and the form counts for less
+// the longer ago the matches were played (see formFreshness).
 func ComputeFaceitScore(f *FaceitPlayer) float64 {
 	score := AssessRank(nil, f).Value
 	if f.Recent != nil && f.Recent.Matches > 0 {
-		score = score*0.75 + faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)*0.25
+		w := 0.25 * formFreshness(f.Recent.LastMatchAt)
+		score = score*(1-w) + faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)*w
 	}
 	return math.Round(score*10000) / 100
 }
