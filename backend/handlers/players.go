@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 
 	"cs2-tournament/models"
@@ -259,15 +260,6 @@ func (h *Handler) RefreshPlayer(c *gin.Context) {
 		return
 	}
 
-	// A changed score changes the average of the team the player is on
-	h.db.Exec(`
-		UPDATE teams t SET avg_skill_score = COALESCE((
-			SELECT AVG(p.skill_score)
-			FROM team_players tp JOIN players p ON p.id = tp.player_id
-			WHERE tp.team_id = t.id
-		), 0)
-		WHERE t.id IN (SELECT team_id FROM team_players WHERE player_id = $1)`, playerID)
-
 	c.JSON(http.StatusOK, gin.H{
 		"id":             playerID,
 		"steam_name":     summary.Name,
@@ -292,7 +284,7 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 		       steam_stats, faceit_stats
 		FROM players
 		WHERE tournament_id=$1
-		ORDER BY skill_score DESC NULLS LAST, created_at ASC`,
+		ORDER BY created_at ASC`,
 		tournamentID,
 	)
 	if err != nil {
@@ -316,16 +308,33 @@ func loadPlayers(db *sql.DB, tournamentID string) ([]models.Player, error) {
 		if banInfoRaw != nil {
 			json.Unmarshal(banInfoRaw, &p.BanInfo)
 		}
-		fillDetails(&p,
-			unmarshalOrNil[services.LeetifyProfile](leetifyRaw),
-			unmarshalOrNil[services.CS2Stats](steamRaw),
-			unmarshalOrNil[services.FaceitPlayer](faceitRaw),
-		)
+		leetify := unmarshalOrNil[services.LeetifyProfile](leetifyRaw)
+		steam := unmarshalOrNil[services.CS2Stats](steamRaw)
+		faceit := unmarshalOrNil[services.FaceitPlayer](faceitRaw)
+		// Score from the stored stats rather than trust the stored score:
+		// a rank loses confidence as it ages, and the model may have changed
+		// since the player was fetched.
+		if leetify != nil || steam != nil || faceit != nil {
+			p.SkillScore, p.PrivacyMode = services.CombineScores(leetify, steam, faceit)
+		}
+		fillDetails(&p, leetify, steam, faceit)
 		players = append(players, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if players == nil {
 		players = []models.Player{}
 	}
+	// Best first, players without a score last. Stable, so ties stay in
+	// sign-up order.
+	sort.SliceStable(players, func(i, j int) bool {
+		a, b := players[i].SkillScore, players[j].SkillScore
+		if a == nil || b == nil {
+			return a != nil
+		}
+		return *a > *b
+	})
 	return players, nil
 }
 
@@ -359,6 +368,7 @@ func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats 
 			TotalMatches:   profile.TotalMatches,
 			ReactionTimeMs: profile.Stats.ReactionTimeMs,
 			HeadAccuracy:   profile.Stats.AccuracyHead,
+			Partial:        profile.Partial,
 			OpeningDuels: (profile.Stats.CtOpeningDuelSuccessPercentage +
 				profile.Stats.TOpeningDuelSuccessPercentage) / 2,
 		}
@@ -384,23 +394,33 @@ func fillDetails(p *models.Player, profile *services.LeetifyProfile, steamStats 
 		}
 	}
 
-	if rank := services.AssessRank(profile, faceit); rank.Value > 0 {
-		p.RankCheck = &models.RankCheck{
-			Source:        rank.Source,
-			Confidence:    rank.Confidence,
-			Listed:        rank.Listed * 100,
-			Adjusted:      rank.Value * 100,
-			Underrated:    rank.Underrated,
-			Mechanics:     rank.Mechanics * 100,
-			Outperforming: rank.Outperforming,
-		}
-		if rank.Matches != services.UnknownMatches {
-			p.RankCheck.Matches = &rank.Matches
-		}
-		if faceit != nil && faceit.Performance != nil {
-			p.RankCheck.ImpliedElo = faceit.Performance.ImpliedElo
-			p.RankCheck.LobbyElo = faceit.Performance.LobbyElo
-			p.RankCheck.PerformanceMatches = faceit.Performance.Matches
-		}
+	p.RankCheck = rankCheck(services.DefaultScoreSettings(), profile, faceit)
+}
+
+// rankCheck says how the given settings assess a player's rank, or nil when
+// they score the player on no rank at all.
+func rankCheck(settings services.ScoreSettings, profile *services.LeetifyProfile, faceit *services.FaceitPlayer) *models.RankCheck {
+	rank := settings.AssessRank(profile, faceit)
+	if rank.Value <= 0 {
+		return nil
 	}
+	check := &models.RankCheck{
+		Source:           rank.Source,
+		Confidence:       rank.Confidence,
+		Listed:           rank.Listed * 100,
+		Adjusted:         rank.Value * 100,
+		Underrated:       rank.Underrated,
+		Mechanics:        rank.Mechanics * 100,
+		TypicalMechanics: rank.TypicalMechanics * 100,
+		Outperforming:    rank.Outperforming,
+	}
+	if rank.Matches != services.UnknownMatches {
+		check.Matches = &rank.Matches
+	}
+	if faceit != nil && faceit.Performance != nil {
+		check.ImpliedElo = faceit.Performance.ImpliedElo
+		check.LobbyElo = faceit.Performance.LobbyElo
+		check.PerformanceMatches = faceit.Performance.Matches
+	}
+	return check
 }

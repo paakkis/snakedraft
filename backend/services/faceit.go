@@ -59,8 +59,9 @@ type faceitMatch struct {
 
 // FaceitRecent summarises a player's latest Faceit matches.
 type FaceitRecent struct {
-	Matches     int        `json:"matches"`
-	KDRatio     float64    `json:"kd_ratio"` // total kills / total deaths
+	Matches int     `json:"matches"`
+	KDRatio float64 `json:"kd_ratio"` // total kills / total deaths
+	// ADR is averaged over the matches Faceit has one for; 0 when none.
 	ADR         float64    `json:"adr"`
 	HSPercent   float64    `json:"hs_percent"`
 	WinRate     float64    `json:"win_rate"` // 0–100
@@ -236,12 +237,17 @@ func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, []faceitMat
 
 	recent := &FaceitRecent{Matches: len(result.Items)}
 	matches := make([]faceitMatch, 0, len(result.Items))
-	var kills, deaths, headshots, adrSum, wins, latest float64
+	var kills, deaths, headshots, adrSum, adrMatches, wins, latest float64
 	for _, item := range result.Items {
 		kills += num(item.Stats, "Kills")
 		deaths += num(item.Stats, "Deaths")
 		headshots += num(item.Stats, "Headshots")
-		adrSum += num(item.Stats, "ADR")
+		// Older matches come without an ADR; counting them as 0 would drag
+		// the average down.
+		if adr := num(item.Stats, "ADR"); adr > 0 {
+			adrSum += adr
+			adrMatches++
+		}
 		wins += num(item.Stats, "Result")
 		at := num(item.Stats, "Match Finished At")
 		if at > latest {
@@ -263,7 +269,9 @@ func (s *FaceitService) recentStats(playerID string) (*FaceitRecent, []faceitMat
 	if kills > 0 {
 		recent.HSPercent = headshots / kills * 100
 	}
-	recent.ADR = adrSum / float64(recent.Matches)
+	if adrMatches > 0 {
+		recent.ADR = adrSum / adrMatches
+	}
 	recent.WinRate = wins / float64(recent.Matches) * 100
 	if latest > 0 {
 		t := time.UnixMilli(int64(latest)).UTC()

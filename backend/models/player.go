@@ -24,6 +24,10 @@ type LeetifyStats struct {
 	ReactionTimeMs float64 `json:"reaction_time_ms"`
 	HeadAccuracy   float64 `json:"head_accuracy"` // 0–100
 	OpeningDuels   float64 `json:"opening_duels"` // avg CT+T opening duel win %, 0–100
+	// Partial: the public API does not have the player, and the stats are
+	// averages over their last matches as shown on the Leetify website.
+	// There is no positioning rating or opening duel percentage.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // SteamStats are lifetime CS2 stats from the Steam Web API.
@@ -59,9 +63,11 @@ type RankCheck struct {
 	// player is scored on.
 	Listed   float64 `json:"listed"`
 	Adjusted float64 `json:"adjusted"`
-	// Underrated: aim and positioning sit well above the rank.
-	Underrated bool    `json:"underrated"`
-	Mechanics  float64 `json:"mechanics,omitempty"`
+	// Underrated: aim and positioning (Mechanics) sit well above what is
+	// typical for the rank (TypicalMechanics).
+	Underrated       bool    `json:"underrated"`
+	Mechanics        float64 `json:"mechanics,omitempty"`
+	TypicalMechanics float64 `json:"typical_mechanics,omitempty"`
 	// Outperforming: the player keeps performing like a clearly higher
 	// Faceit ELO than their own, given the lobbies they play in.
 	Outperforming      bool    `json:"outperforming"`

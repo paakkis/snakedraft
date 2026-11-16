@@ -67,6 +67,34 @@ func TestFaceitGetPlayer(t *testing.T) {
 		t.Errorf("wrong last match time: %v", r.LastMatchAt)
 	}
 
+	// A match without an ADR is left out of the average, not counted as 0.
+	fakeFaceit(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/players":
+			w.Write([]byte(`{"player_id":"abc","nickname":"Nick","games":{"cs2":{"skill_level":5,"faceit_elo":1100}}}`))
+		case strings.HasPrefix(r.URL.Path, "/players/abc/games/cs2/stats"):
+			w.Write([]byte(`{"items":[
+				{"stats":{"Kills":"20","Deaths":"10","ADR":"90","Result":"1"}},
+				{"stats":{"Kills":"10","Deaths":"20","Result":"0"}}]}`))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	})
+	if p, err := s.GetPlayer("76561198000000001"); err != nil || p == nil || p.Recent == nil || p.Recent.ADR != 90 {
+		t.Errorf("ADR must be averaged over the matches that have one: %+v, %v", p, err)
+	}
+}
+
+func TestFaceitGetPlayer_NotFound(t *testing.T) {
+	fakeFaceit(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("game_player_id") == "csgo-only" {
+			w.Write([]byte(`{"player_id":"old","nickname":"Old","games":{"csgo":{"skill_level":5,"faceit_elo":1100}}}`))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	s := NewFaceitService("key")
+
 	if p, err := s.GetPlayer("unknown"); p != nil || err != nil {
 		t.Errorf("unknown player should be (nil, nil), got (%v, %v)", p, err)
 	}

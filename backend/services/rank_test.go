@@ -195,10 +195,10 @@ func TestComputeSkillScore_UnsettledRankCountsLess(t *testing.T) {
 		t.Errorf("a 5-match rank must weigh much less than a settled one: fresh=%v settled=%v", fresh, settled)
 	}
 
-	// Hand-computed for the fresh account. The rank (1/3) is raised towards
-	// the mechanics (0.8): 1/3 + 0.5·(0.8 − 1/3 − 0.05) = 0.54167. It gets
-	// weight 0.55·0.2 = 0.11, aim and positioning 0.8 at weight 0.25.
-	rank := 1.0/3 + 0.5*(0.8-1.0/3-0.05)
+	// Hand-computed for the fresh account. Mechanics of 0.55 are typical for
+	// its rank (1/3), so the rank is raised by 0.5·(0.8 − 0.55 − 0.05) = 0.1.
+	// It gets weight 0.55·0.2 = 0.11, aim and positioning 0.8 at weight 0.25.
+	rank := 1.0/3 + 0.1
 	want := (0.11*rank + 0.2) / 0.36 * 100
 	if math.Abs(fresh-want) > 0.01 {
 		t.Errorf("fresh account: got %v, want %v", fresh, want)
@@ -227,9 +227,11 @@ func TestAssessRank_MechanicsAboveRank(t *testing.T) {
 		return p
 	}
 
-	// Rank 0.4, mechanics 0.8: raised by half of the gap beyond the tolerance.
+	// Rank 0.4, where mechanics of 0.40 + 0.45·0.4 = 0.58 are typical.
+	// Mechanics 0.8: raised by half of the gap beyond the tolerance.
 	a := AssessRank(profile(14000, 80, 80), nil)
-	if !near(a.Listed, 0.4) || !near(a.Mechanics, 0.8) || !near(a.Value, 0.4+0.5*0.35) || !a.Underrated {
+	if !near(a.Listed, 0.4) || !near(a.Mechanics, 0.8) || !near(a.TypicalMechanics, 0.58) ||
+		!near(a.Value, 0.4+0.5*0.17) || !a.Underrated {
 		t.Errorf("mechanics far above rank: got %+v", a)
 	}
 
@@ -239,13 +241,14 @@ func TestAssessRank_MechanicsAboveRank(t *testing.T) {
 	}
 
 	// A gap between the tolerance and the flag: nudged, but not flagged.
-	a = AssessRank(profile(14000, 48, 48), nil)
+	a = AssessRank(profile(14000, 66, 66), nil)
 	if !near(a.Value, 0.4+0.5*0.03) || a.Underrated {
 		t.Errorf("small gap: got %+v", a)
 	}
 
-	// Within the tolerance, and mechanics below the rank: the rank stands.
-	for _, m := range []float64{44, 40, 20} {
+	// Within the tolerance, and mechanics below the typical ones: the rank
+	// stands. 50 is well above the rank of 0.4 itself, but normal for it.
+	for _, m := range []float64{62, 58, 50, 20} {
 		if a := AssessRank(profile(14000, m, m), nil); !near(a.Value, 0.4) || a.Underrated {
 			t.Errorf("mechanics %v: rank must stand, got %+v", m, a)
 		}
@@ -261,7 +264,8 @@ func TestAssessRank_MechanicsAboveRank(t *testing.T) {
 		t.Errorf("rank above 1: %+v", a)
 	}
 
-	// The comparison is against the best listed rank, whichever platform it is from.
+	// The comparison is against the best listed rank, whichever platform it
+	// is from: 0.76 is typical at 0.8.
 	a = AssessRank(profile(14000, 80, 80), &FaceitPlayer{Elo: 2400})
 	if a.Source != RankSourceFaceit || !near(a.Value, 0.8) || a.Underrated {
 		t.Errorf("Faceit rank matching the mechanics: got %+v", a)
@@ -271,14 +275,14 @@ func TestAssessRank_MechanicsAboveRank(t *testing.T) {
 func TestComputeSkillScore_UnderratedPlayerScoresHigher(t *testing.T) {
 	fixClock(t, testNow)
 
-	// Hand-computed: rank 0.4 raised to 0.575 at weight 0.55, mechanics 0.8
-	// at weight 0.25 → (0.31625 + 0.2) / 0.8 = 64.53. Without the correction
+	// Hand-computed: rank 0.4 raised to 0.485 at weight 0.55, mechanics 0.8
+	// at weight 0.25 → (0.26675 + 0.2) / 0.8 = 58.34. Without the correction
 	// it would be (0.22 + 0.2) / 0.8 = 52.5.
 	p := &LeetifyProfile{PrivacyMode: "public"}
 	p.Ranks.Premier = 14000
 	p.Rating.Aim, p.Rating.Positioning = 80, 80
-	if got := ComputeSkillScore(p, nil); math.Abs(got-64.53) > 0.01 {
-		t.Errorf("got %v, want 64.53", got)
+	if got := ComputeSkillScore(p, nil); math.Abs(got-58.34) > 0.01 {
+		t.Errorf("got %v, want 58.34", got)
 	}
 }
 
@@ -289,6 +293,7 @@ func TestFaceitMatchRating(t *testing.T) {
 		{0.6, 50, 0},
 		{3.0, 150, 1}, // clamped
 		{1.4, 50, 0.5},
+		{1.2, 0, 0.75}, // no ADR for the match: K/D alone
 	}
 	for _, c := range cases {
 		if got := faceitMatchRating(c.kd, c.adr); !near(got, c.want) {
@@ -383,8 +388,9 @@ func TestAssessRank_PerformanceAgainstLobby(t *testing.T) {
 	}
 
 	// The mechanics are compared with the adjusted rank, so the same
-	// evidence is not counted twice: 0.475 vs mechanics 0.5 is within tolerance.
-	p.Rating.Aim, p.Rating.Positioning = 50, 50
+	// evidence is not counted twice: mechanics of 0.65 are within tolerance
+	// of the 0.614 typical at 0.475, but would not be of the 0.55 typical at 1/3.
+	p.Rating.Aim, p.Rating.Positioning = 65, 65
 	if a := AssessRank(p, player(1000, 5, 5, 2000)); !near(a.Value, 1425.0/3000) || a.Underrated {
 		t.Errorf("mechanics within tolerance of the adjusted rank: got %+v", a)
 	}
@@ -393,6 +399,43 @@ func TestAssessRank_PerformanceAgainstLobby(t *testing.T) {
 	p.Ranks.Premier = 21000
 	if a := AssessRank(p, player(1000, 5, 5, 2000)); a.Source != RankSourcePremier || !near(a.Value, 0.6) || !a.Outperforming {
 		t.Errorf("flag must survive being scored on Premier: got %+v", a)
+	}
+}
+
+func TestAssessRank_OldPerformanceCountsLess(t *testing.T) {
+	fixClock(t, testNow)
+	player := func(age time.Duration) *FaceitPlayer {
+		last := testNow.Add(-age)
+		return &FaceitPlayer{Elo: 1800, LifetimeMatches: 480,
+			Recent:      &FaceitRecent{Matches: 10, KDRatio: 1.4, ADR: 100, LastMatchAt: &last},
+			Performance: &FaceitPerformance{Matches: 10, ImpliedElo: 2300}}
+	}
+	// 480 matches → settled 0.96 → pull (1 − 0.75·0.96) · 10/15 = 0.18667.
+	const pull = (1 - 0.75*0.96) * 10.0 / 15
+
+	// Played yesterday: the full pull, and flagged.
+	a := AssessRank(nil, player(24*time.Hour))
+	if math.Abs(a.Value-(1800+pull*500)/3000) > 1e-3 || !a.Outperforming {
+		t.Errorf("fresh matches: got %+v", a)
+	}
+
+	// One half-life ago: half the pull.
+	a = AssessRank(nil, player(performanceHalfLife))
+	if !near(a.Value, (1800+pull*0.5*500)/3000) {
+		t.Errorf("matches one half-life old: got %v", a.Value)
+	}
+
+	// 20 months ago: the rank barely moves and the player is not flagged,
+	// even though the stale rank itself has lost most of its confidence.
+	a = AssessRank(nil, player(600*24*time.Hour))
+	if a.Value-a.Listed > 0.004 || a.Outperforming {
+		t.Errorf("20-month-old matches must not matter: got %+v", a)
+	}
+
+	// The same goes for the recent form of a Faceit-only player.
+	fresh, old := ComputeFaceitScore(player(24*time.Hour)), ComputeFaceitScore(player(600*24*time.Hour))
+	if old > 62 || fresh < 70 {
+		t.Errorf("old form must count for less: fresh=%v old=%v", fresh, old)
 	}
 }
 

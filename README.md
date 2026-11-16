@@ -37,11 +37,60 @@ positioning and utility ratings and recent form. Steam lifetime stats are only
 a small part, unless a player has nothing else. Missing data is left out
 instead of counted as zero.
 
+Leetify's public API only knows players who have signed up there. For anyone
+else the app falls back to the data behind the Leetify website, which covers
+their last 30 or so matches: ranks, aim, utility and average rating, but no
+positioning rating or opening duels. These players are marked with `*` in the
+Source column. That API is not documented or meant for outside use, so it can
+stop working at any time. When it does, those players are scored on Faceit and
+Steam as before.
+
 A rank is not taken at face value. It counts for less when there are few
 matches behind it or it has not been played for in a long time, and it is
 corrected when the player's stats say it is too low. See
 [Is the rank right?](#is-the-rank-right) below. Details are in
 `backend/services/scoring.go` and `backend/services/rank.go`.
+
+## Drafts and their settings
+
+A tournament can hold any number of drafts. Each one is made with its own
+settings and kept next to the others, so you can draft the same players in
+different ways and see what changes.
+
+The settings panel sits above the player list, and the list follows it: the
+Score column shows what every player scores with the settings that are
+selected, with the full model's score in grey next to it. So what you see in
+the list is what the next draft is made on. Nothing is fetched for this, the
+scores come from the stats that are already stored.
+
+The panel has four presets:
+
+| Preset | Scores players on |
+| --- | --- |
+| Full model | Everything described below. This is what the player list shows. |
+| Faceit + Premier | The better of Faceit ELO and Premier rating, as listed |
+| Faceit only | Faceit ELO as listed |
+| Premier only | Premier rating as listed |
+
+"All settings" opens the rest: which ranks and whether Steam stats are used,
+the weight of each component, each of the three rank corrections, the fairness
+limit for teammate requests and whether requests are honoured at all. Only the
+ratios between the weights matter.
+
+Some settings cannot score everyone. A Faceit-only draft has nothing to go on
+for a player who is not on Faceit. By default such a player is scored with the
+full model and marked with `~`. Switch that off and they are left out of the
+draft instead.
+
+Each draft has a tab with its teams, on the scores it was made with. Those
+scores are stored with the draft, so it stays what it was when players are
+refreshed later. "Use these settings" on a draft loads its settings back into
+the panel. "Compare all" puts the drafts side by side: their settings,
+the spread on their own scores, the spread when the same teams are measured
+with the full model, how many teammate requests were kept, and which team
+every player is on in each draft.
+
+The code is in `backend/services/settings.go` and `backend/handlers/drafts.go`.
 
 ## How the balancing works
 
@@ -62,6 +111,8 @@ $$\text{score} = 100 \cdot \frac{\sum_{c \in P} w_c \, x_c}{\sum_{c \in P} w_c},
 
 $P$ is the set of components the player actually has data for. Dividing by the
 weights that are present is what keeps a missing source from counting as zero.
+
+The weights below are the defaults. Each can be changed per draft.
 
 | Component | Weight | Range |
 | --- | --- | --- |
@@ -111,33 +162,51 @@ they belong 400 ELO above it. The $E_j$ are averaged with the same 0.85 decay
 as recent form, giving $E_\text{perf}$ over $m$ matches. The Faceit ELO is
 then moved towards it:
 
-$$E' = E + \left(1 - 0.75\,c\right) \frac{m}{m + 5} \left(E_\text{perf} - E\right)$$
+$$E' = E + \left(1 - 0.75\,\frac{n}{n + 20}\right) \frac{m}{m + 5} \cdot 0.5^{\,d / 180} \left(E_\text{perf} - E\right)$$
 
-where $c$ is the confidence above. A 5-match account at 1000 ELO that holds
-its own in 2000 ELO lobbies is scored as 1425. For a settled rank the same
-performance moves it by about a sixth of the gap. This works both ways, so a
-player who is carried in lobbies above their level moves down. A player is
-flagged when $E_\text{perf}$ is at least 150 above their ELO over 5 or more
-matches. This costs up to 11 extra Faceit requests per player. It only works
+where $n$ is the number of matches behind the rank and $d$ the days since the
+last match. A 5-match account at 1000 ELO that holds its own in 2000 ELO
+lobbies is scored as 1425. For a settled rank the same performance moves it by
+about a sixth of the gap. This works both ways, so a player who is carried in
+lobbies above their level moves down.
+
+The last factor is there because these are the player's latest matches, so
+they are exactly as old as the rank. Matches from 20 months ago show the form
+the player was in then, and move the rank by a tenth of what fresh ones would.
+A player is flagged when $E_\text{perf}$ is at least 150 above their ELO over
+5 or more matches, the last of them at most 180 days ago. Faceit has no ADR
+for older matches. Those are rated on K/D alone.
+
+This costs up to 11 extra Faceit requests per player. It only works
 for Faceit: Leetify does not say what rank the other players in a Premier
 match have.
 
 **Mechanics above rank.** Aim and positioning are measured per match and do
 not depend on who the player is matched against. Let $M$ be their weighted
-average and $R$ the normalised rank, both on a 0–1 scale. If $M - R > 0.05$:
+average (aim 3, positioning 2) and $R$ the normalised rank, both on a 0–1
+scale. The two cannot be compared directly, because mechanics spread over a
+much narrower range than ranks do: players ranked around 0.35 still have
+mechanics around 0.55. So $M$ is compared with what is typical for the rank:
 
-$$R' = R + 0.5 \, (M - R - 0.05)$$
+$$T(R) = 0.40 + 0.45\,R$$
+
+If $M - T(R) > 0.05$:
+
+$$R' = R + 0.5 \, (M - T(R) - 0.05)$$
 
 From a gap of 0.10 the player is flagged as underrated. This only ever raises
-a rank. A rank above the mechanics is normal for players who win on game sense
-and teamwork.
+a rank. Mechanics below the typical ones are normal for players who win on
+game sense and teamwork.
 
 The player list marks these players next to the score: a green ▲ when the
 rank looks too low, and an amber ? when it counts for less than half of its
 normal weight. Hover over the mark for the numbers.
 
 The constants (20, 400, 0.05 and so on) are judgement calls, checked against a
-small pool of real players. They are not fitted to data.
+small pool of real players. They are not fitted to data. The one exception is
+$T(R)$, which is a line through the 14 players with a settled rank in one
+20-player tournament. That is a thin basis, so treat it as a rough guide. Each
+of the three checks can be switched off per draft.
 
 ### 2. Snake draft
 
@@ -176,7 +245,8 @@ $$\Delta = 2d\,(S_x - S_y + d)$$
 and the swap is made while $\Delta < 0$.
 
 A draft is fair when the gap between the strongest and weakest team average is
-at most $\max(2.0,\ \text{gap of the draft without requests})$. If it is not
+at most $\max(2.0,\ \text{gap of the draft without requests})$. The 2.0 is
+the "max spread" setting of the draft. If it is not
 fair, the request whose removal helps the most is dropped, and dropped
 requests are retried at the end in case they fit after all.
 

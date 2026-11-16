@@ -21,9 +21,16 @@ const (
 )
 
 const (
+	// mechanicsBase and mechanicsSlope give the aim and positioning that are
+	// typical for a rank (both 0–1): 0.40 + 0.45 · rank. Mechanics spread
+	// over a much narrower range than ranks do. Players with a low rank
+	// still aim at around 0.55, so comparing the two numbers directly makes
+	// every low-ranked player look underrated.
+	mechanicsBase  = 0.40
+	mechanicsSlope = 0.45
+
 	// mechanicsTolerance is how far the measured mechanics may sit above the
-	// rank before the rank is questioned. Among settled players the two stay
-	// within a few points of each other, with mechanics usually the lower.
+	// typical ones for the rank before the rank is questioned.
 	mechanicsTolerance = 0.05
 
 	// mechanicsPull is the share of the gap beyond the tolerance that the
@@ -53,9 +60,15 @@ const (
 	// player who keeps performing above their lobbies.
 	performanceMinPull = 0.25
 
+	// performanceHalfLife is how long ago the matches can have been played
+	// before their pull on the rank halves. They show the form the player
+	// was in then, which says less and less about the form they are in now.
+	performanceHalfLife = 180 * 24 * time.Hour
+
 	// outperformingElo and outperformingMatches are the gap between implied
 	// and listed ELO, and the number of matches it must hold over, from
-	// which a player is flagged as underrated.
+	// which a player is flagged as underrated. The matches must also be
+	// newer than performanceHalfLife.
 	outperformingElo     = 150.0
 	outperformingMatches = 5
 )
@@ -82,7 +95,9 @@ type RankAssessment struct {
 	// Mechanics is the player's measured aim and positioning (0–1), or 0
 	// when Leetify has no ratings for them.
 	Mechanics float64
-	// Underrated is set when the mechanics sit well above the listed rank.
+	// TypicalMechanics is what Mechanics usually is at this rank.
+	TypicalMechanics float64
+	// Underrated is set when the mechanics sit well above the typical ones.
 	Underrated bool
 	// Outperforming is set when a player keeps performing like a clearly
 	// higher Faceit ELO than their own, given the lobbies they play in.
@@ -117,10 +132,16 @@ func rankConfidence(matches int, lastPlayed *time.Time) float64 {
 	return c
 }
 
-// AssessRank picks the rank a player is scored on (the better of Faceit and
-// Premier) and works out how much it can be trusted. Both arguments may be
-// nil. Faceit's own data wins over the copy Leetify holds, which can be stale.
+// AssessRank is ScoreSettings.AssessRank with the default settings.
 func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
+	return DefaultScoreSettings().AssessRank(p, f)
+}
+
+// AssessRank picks the rank a player is scored on (the better of Faceit and
+// Premier, of those the settings use) and works out how much it can be
+// trusted. Both arguments may be nil. Faceit's own data wins over the copy
+// Leetify holds, which can be stale.
+func (s ScoreSettings) AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	if p != nil && p.PrivacyMode != "public" {
 		p = nil
 	}
@@ -128,6 +149,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	var faceit, premier RankAssessment
 
 	switch {
+	case !s.UseFaceit:
 	case f != nil && f.Elo > 0:
 		faceit = RankAssessment{Source: RankSourceFaceit, Listed: normalizeFaceitElo(float64(f.Elo)), Matches: UnknownMatches}
 		if f.LifetimeMatches > 0 {
@@ -149,7 +171,7 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 		}
 	}
 
-	if p != nil && p.Ranks.Premier > 0 {
+	if s.UsePremier && p != nil && p.Ranks.Premier > 0 {
 		premier = RankAssessment{Source: RankSourcePremier, Listed: normalize(float64(p.Ranks.Premier), 0, 35000)}
 		premier.Matches, _ = leetifyMatches(p, isPremierMatch)
 		if at, ok := PremierRatedAt(p); ok {
@@ -162,14 +184,20 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 	faceit.Value, premier.Value = faceit.Listed, premier.Listed
 
 	// Performance against the lobby moves the Faceit ELO towards the ELO the
-	// player performed like. The less settled the rank and the more matches
-	// the performance covers, the further it moves. This works both ways.
-	if perf := performanceOf(f); perf != nil {
+	// player performed like. The fewer matches the rank was earned over and
+	// the more matches the performance covers, the further it moves. This
+	// works both ways. The matches are the player's latest ones, so they are
+	// exactly as old as the rank: a rank going stale is no reason to trust
+	// them more, and old matches pull less.
+	if perf := performanceOf(f); perf != nil && s.UseFaceit && s.AdjustForPerformance {
 		m := float64(perf.Matches)
-		pull := (1 - (1-performanceMinPull)*faceit.Confidence) * m / (m + performanceSettleMatches)
+		settled := rankConfidence(faceit.Matches, nil)
+		fresh := formFreshness(faceit.LastPlayed)
+		pull := (1 - (1-performanceMinPull)*settled) * m / (m + performanceSettleMatches) * fresh
 		elo := float64(f.Elo)
 		faceit.Value = normalizeFaceitElo(elo + pull*(perf.ImpliedElo-elo))
-		faceit.Outperforming = perf.Matches >= outperformingMatches && perf.ImpliedElo-elo >= outperformingElo
+		faceit.Outperforming = fresh >= 0.5 &&
+			perf.Matches >= outperformingMatches && perf.ImpliedElo-elo >= outperformingElo
 	}
 
 	// A player is at least as good as their best platform shows; a low rank
@@ -191,16 +219,37 @@ func AssessRank(p *LeetifyProfile, f *FaceitPlayer) RankAssessment {
 
 	// Aim and positioning are measured per match and do not depend on who
 	// the player is matched against, so they show skill the rank has not
-	// caught up with yet. Only ever raises the rank: a rank above the
-	// mechanics is normal for players who win on game sense and teamwork.
+	// caught up with yet. They are compared with what is typical for the
+	// rank. Only ever raises the rank: mechanics below the typical ones are
+	// normal for players who win on game sense and teamwork.
 	if p != nil {
 		best.Mechanics = mechanics(p)
 	}
-	if gap := best.Mechanics - best.Value; best.Mechanics > 0 && gap > mechanicsTolerance {
+	best.TypicalMechanics = typicalMechanics(best.Value)
+	if gap := best.Mechanics - best.TypicalMechanics; s.AdjustForMechanics && best.Mechanics > 0 && gap > mechanicsTolerance {
 		best.Value = math.Min(1, best.Value+mechanicsPull*(gap-mechanicsTolerance))
 		best.Underrated = gap >= underratedGap
 	}
 	return best
+}
+
+// formFreshness is how much a player's latest Faceit matches still say about
+// their current form (0–1): it halves every performanceHalfLife since the
+// last one. 1 when it is not known when that was.
+func formFreshness(lastPlayed *time.Time) float64 {
+	if lastPlayed == nil {
+		return 1
+	}
+	age := timeNow().Sub(*lastPlayed)
+	if age <= 0 {
+		return 1
+	}
+	return math.Pow(0.5, float64(age)/float64(performanceHalfLife))
+}
+
+// typicalMechanics is the aim and positioning usually seen at a rank (0–1).
+func typicalMechanics(rank float64) float64 {
+	return mechanicsBase + mechanicsSlope*rank
 }
 
 // performanceOf returns a player's usable Faceit performance, or nil.
@@ -213,7 +262,12 @@ func performanceOf(f *FaceitPlayer) *FaceitPerformance {
 
 // faceitMatchRating rates a single Faceit match from 0 to 1 on K/D (0.6–1.4)
 // and ADR (50–100), equally weighted. 0.5 is an average player in the lobby.
+// Faceit has no ADR for older matches (it is then 0): those are rated on K/D
+// alone.
 func faceitMatchRating(kd, adr float64) float64 {
+	if adr <= 0 {
+		return normalize(kd, 0.6, 1.4)
+	}
 	return (normalize(kd, 0.6, 1.4) + normalize(adr, 50, 100)) / 2
 }
 
@@ -245,17 +299,26 @@ func summarisePerformance(matches []faceitMatch) *FaceitPerformance {
 	return &FaceitPerformance{Matches: n, ImpliedElo: implied / weightSum, LobbyElo: lobby / float64(n)}
 }
 
+// mechanicsAimShare is how much of the mechanics is aim, the rest being
+// positioning: the same 3 to 2 as their default weights in the skill score.
+const mechanicsAimShare = 0.6
+
 // mechanics is the average of a player's Leetify aim and positioning ratings
-// (0–1), weighted as in the skill score. 0 when neither is known.
+// (0–1). 0 when neither is known, and also for a partial profile: it has an
+// aim rating only, and aim alone runs well above the two together, so it
+// cannot be held against what is typical for a rank.
 func mechanics(p *LeetifyProfile) float64 {
+	if p.Partial {
+		return 0
+	}
 	var sum, weight float64
 	if p.Rating.Aim > 0 {
-		sum += p.Rating.Aim / 100 * weightAim
-		weight += weightAim
+		sum += p.Rating.Aim / 100 * mechanicsAimShare
+		weight += mechanicsAimShare
 	}
 	if p.Rating.Positioning > 0 {
-		sum += p.Rating.Positioning / 100 * weightPositioning
-		weight += weightPositioning
+		sum += p.Rating.Positioning / 100 * (1 - mechanicsAimShare)
+		weight += 1 - mechanicsAimShare
 	}
 	if weight == 0 {
 		return 0

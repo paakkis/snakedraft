@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import type { Player } from '../types'
-import { useTournamentStore } from '../store/tournament'
+import type { DraftScore, Player, RankCheck } from '../types'
+import { rankCheckOf, scoreOf, useTournamentStore } from '../store/tournament'
+import { describeSettings, isFullModel } from '../lib/draftSettings'
 import CopyButton from './CopyButton'
 import FaceitLevel from './FaceitLevel'
 
 type SortKey = 'score' | 'name' | 'faceit' | 'premier' | 'hours' | 'winrate' | 'kd' | 'recentKd'
 
-const SORT_VALUE: Record<SortKey, (p: Player) => number | string | undefined> = {
-  score: p => p.skill_score,
+// The score is sorted on separately: it depends on the selected draft settings.
+const SORT_VALUE: Record<Exclude<SortKey, 'score'>, (p: Player) => number | string | undefined> = {
   name: p => p.steam_name?.toLowerCase(),
   faceit: p => p.faceit_elo ?? (p.faceit_level ? p.faceit_level * 100 : undefined),
   premier: p => p.premier_rating,
@@ -63,10 +64,14 @@ function StaleRank({ platform, lastPlayed, unknownNote }: {
 function source(p: Player): { label: string; className: string; title: string } {
   const hasScore = p.skill_score != null && p.skill_score >= 0
   if (p.privacy_mode === 'public' && hasScore) {
+    const partial = p.leetify?.partial
     return {
-      label: p.faceit ? 'Leetify + Faceit' : 'Leetify',
-      className: 'text-emerald-400',
-      title: 'Rank (Faceit or Premier) and Leetify stats' + (p.steam ? ', 5% Steam lifetime stats' : ''),
+      label: (p.faceit ? 'Leetify + Faceit' : 'Leetify') + (partial ? ' *' : ''),
+      className: partial ? 'text-teal-400' : 'text-emerald-400',
+      title: 'Rank (Faceit or Premier) and Leetify stats' + (p.steam ? ', 5% Steam lifetime stats' : '')
+        + (partial
+          ? `. * Leetify's public API does not have this player. Aim, utility and form are averages over their last ${p.leetify!.total_matches} matches as shown on the Leetify website. No positioning rating or opening duels.`
+          : ''),
     }
   }
   if (p.privacy_mode === 'faceit_only') {
@@ -100,10 +105,14 @@ function source(p: Player): { label: string; className: string; title: string } 
 // Below this confidence a rank counts for less than half of its normal weight.
 const UNSURE_RANK_CONFIDENCE = 0.5
 
-/** Marks next to the score: signs the rank is too low, and a rank too thin to trust. */
-function RankFlags({ player }: { player: Player }) {
-  const c = player.rank_check
-  if (!c || player.skill_score == null || player.skill_score < 0) return null
+/**
+ * Marks next to the score: signs the rank is too low, and a rank too thin to
+ * trust. `weighsConfidence` is whether the score counts a thin rank for less.
+ */
+function RankFlags({ player, check: c, weighsConfidence }: {
+  player: Player; check?: RankCheck; weighsConfidence: boolean
+}) {
+  if (!c) return null
   const platform = c.source === 'faceit' ? 'Faceit' : 'Premier'
 
   const better: string[] = []
@@ -114,13 +123,16 @@ function RankFlags({ player }: { player: Player }) {
     )
   }
   if (c.underrated && c.mechanics) {
-    better.push(`Aim and positioning (${c.mechanics.toFixed(0)}) are well above the ${platform} rank (${c.listed.toFixed(0)})`)
+    better.push(
+      `Aim and positioning (${c.mechanics.toFixed(0)}) are well above what is typical for the ${platform} rank`
+      + (c.typical_mechanics ? ` (${c.typical_mechanics.toFixed(0)})` : ''),
+    )
   }
   const betterTitle = better.length
     ? `Probably better than the rank shows. ${better.join('. ')}. Scored on a rank of ${c.adjusted.toFixed(0)}.`
     : null
 
-  const unsureTitle = c.confidence < UNSURE_RANK_CONFIDENCE
+  const unsureTitle = weighsConfidence && c.confidence < UNSURE_RANK_CONFIDENCE
     ? `${platform} rank is uncertain`
       + (c.matches != null ? ` (about ${c.matches.toLocaleString()} matches)` : '')
       + `. It counts for ${Math.round(c.confidence * 100)}% of its normal weight, so the other stats count for more.`
@@ -138,8 +150,27 @@ function RankFlags({ player }: { player: Player }) {
   )
 }
 
-function ScoreCell({ score }: { score?: number }) {
-  if (score == null || score < 0) return <span className="text-zinc-700">–</span>
+const ESTIMATED_TITLE = 'The selected settings cannot rate this player. Scored with the full model instead.'
+
+/**
+ * The score under the selected draft settings. `full` is the full model's
+ * score, shown next to it when the settings are not the full model.
+ */
+function ScoreCell({ score: s, full, compare }: { score?: DraftScore; full?: number; compare: boolean }) {
+  const fullCell = compare && (
+    <span className="w-9 text-right text-xs text-zinc-500" title="Full model">
+      {full != null && full >= 0 ? full.toFixed(1) : '–'}
+    </span>
+  )
+  if (!s) {
+    return (
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-zinc-700" title={compare ? 'The selected settings cannot rate this player. Left out of the draft.' : undefined}>–</span>
+        {fullCell}
+      </div>
+    )
+  }
+  const score = s.score
   const pct = Math.min(Math.max(score, 1), 100)
   return (
     <div className="flex items-center justify-end gap-2">
@@ -154,19 +185,30 @@ function ScoreCell({ score }: { score?: number }) {
           }}
         />
       </div>
-      <span className="font-semibold text-zinc-50 w-9 text-right">{score.toFixed(1)}</span>
+      <span
+        className={`font-semibold w-11 text-right ${s.estimated ? 'text-amber-300 cursor-help' : 'text-zinc-50'}`}
+        title={s.estimated ? ESTIMATED_TITLE : undefined}
+      >
+        {s.estimated && '~'}{score.toFixed(1)}
+      </span>
+      {fullCell}
     </div>
   )
 }
 
 export default function PlayerList() {
-  const { tournament, removePlayer, refreshPlayers, refreshingIds, error, clearError } = useTournamentStore()
+  const {
+    tournament, removePlayer, refreshPlayers, refreshingIds, error, clearError,
+    settings, preview, previewPending,
+  } = useTournamentStore()
   const [sortKey, setSortKey] = useState<SortKey>('score')
   const [ascending, setAscending] = useState(false)
 
   const players = useMemo(() => {
     const list = [...(tournament?.players ?? [])]
-    const value = SORT_VALUE[sortKey]
+    const value = sortKey === 'score'
+      ? (p: Player) => scoreOf({ settings, preview }, p)?.score
+      : SORT_VALUE[sortKey]
     list.sort((a, b) => {
       const va = value(a), vb = value(b)
       if (va == null && vb == null) return 0
@@ -176,11 +218,13 @@ export default function PlayerList() {
       return ascending ? cmp : -cmp
     })
     return list
-  }, [tournament?.players, sortKey, ascending])
+  }, [tournament?.players, sortKey, ascending, settings, preview])
 
   if (!tournament) return null
 
-  const undraftable = players.filter(p => p.skill_score == null || p.skill_score < 0).length
+  const scoring = { settings, preview }
+  const custom = !isFullModel(settings)
+  const undraftable = players.filter(p => !scoreOf(scoring, p)).length
   const refreshing = refreshingIds.length > 0
 
   const sortBy = (key: SortKey) => {
@@ -207,6 +251,14 @@ export default function PlayerList() {
           {undraftable > 0 && (
             <span className="ml-2 normal-case tracking-normal font-normal text-red-400">
               {undraftable} without a score
+            </span>
+          )}
+          {custom && (
+            <span
+              className={`ml-2 normal-case tracking-normal font-normal text-amber-300 ${previewPending ? 'opacity-50' : ''}`}
+              title="The Score column follows the draft settings above. The grey number next to it is the full model's score."
+            >
+              scored on: {describeSettings(settings)[0]}
             </span>
           )}
         </h2>
@@ -257,7 +309,7 @@ export default function PlayerList() {
                 <Th k="kd">Lifetime K/D</Th>
                 <Th k="hours">Hours</Th>
                 <Th align="left">Source</Th>
-                <Th k="score">Score</Th>
+                <Th k="score">{custom ? 'Score / full model' : 'Score'}</Th>
                 <Th>{''}</Th>
               </tr>
             </thead>
@@ -339,15 +391,17 @@ export default function PlayerList() {
                     <td className="px-2 py-1.5 text-right whitespace-nowrap">
                       {p.rating
                         ? <span title={p.leetify
-                            ? `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · opening duels ${p.leetify.opening_duels.toFixed(0)}%`
+                            ? p.leetify.partial
+                              ? `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · last ${p.leetify.total_matches} matches`
+                              : `Leetify ${p.leetify.rating.toFixed(2)} · reaction ${p.leetify.reaction_time_ms.toFixed(0)} ms · HS accuracy ${p.leetify.head_accuracy.toFixed(0)}% · opening duels ${p.leetify.opening_duels.toFixed(0)}%`
                             : undefined}>
-                            {p.rating.aim.toFixed(0)} / {p.rating.positioning.toFixed(0)} / {p.rating.utility.toFixed(0)}
+                            {p.rating.aim.toFixed(0)} / {p.rating.positioning > 0 ? p.rating.positioning.toFixed(0) : '–'} / {p.rating.utility.toFixed(0)}
                           </span>
                         : num(undefined)}
                     </td>
                     <td
                       className="px-2 py-1.5 text-right"
-                      title={p.leetify ? `${p.leetify.total_matches.toLocaleString()} matches` : undefined}
+                      title={p.leetify ? `${p.leetify.partial ? 'Last ' : ''}${p.leetify.total_matches.toLocaleString()} matches` : undefined}
                     >
                       {num(winrate)}
                     </td>
@@ -379,8 +433,14 @@ export default function PlayerList() {
                     </td>
                     <td className="px-2 py-1.5">
                       <div className="flex items-center justify-end gap-1.5">
-                        <RankFlags player={p} />
-                        <ScoreCell score={p.skill_score} />
+                        <RankFlags
+                          player={p}
+                          check={scoreOf(scoring, p) ? rankCheckOf(scoring, p) : undefined}
+                          weighsConfidence={settings.scale_by_confidence || !!scoreOf(scoring, p)?.estimated}
+                        />
+                        <div className={previewPending ? 'opacity-50' : ''}>
+                          <ScoreCell score={scoreOf(scoring, p)} full={p.skill_score} compare={custom} />
+                        </div>
                       </div>
                     </td>
                     <td className="px-2 py-1.5 text-right whitespace-nowrap">

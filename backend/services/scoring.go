@@ -2,17 +2,15 @@ package services
 
 import "math"
 
-// Weights of the skill score components that are referred to elsewhere.
-const (
-	weightRank        = 0.55
-	weightAim         = 0.15
-	weightPositioning = 0.10
-)
+// ComputeSkillScore is ScoreSettings.SkillScore with the default settings.
+func ComputeSkillScore(p *LeetifyProfile, faceit *FaceitPlayer) float64 {
+	return DefaultScoreSettings().SkillScore(p, faceit)
+}
 
-// ComputeSkillScore returns a 0–100 normalized skill score for a player.
-// Returns -1 if the profile is private or holds no usable stats.
+// SkillScore returns a 0–100 normalized skill score for a player. Returns -1
+// if the profile is private or holds no stats that the settings use.
 //
-// Weights:
+// Default weights (see ScoreSettings):
 //
 //	55% Rank: the better of Faceit ELO (0–3000; estimated from the level
 //	    if the ELO is unknown) and Premier rating (0–35000)
@@ -26,39 +24,43 @@ const (
 // a rank earned over a handful of matches, or one not played for in a long
 // time, counts for less and the measured stats count for more. A Faceit ELO
 // is moved towards the one the player performed like against their recent
-// lobbies, and a rank that sits well below the player's aim and positioning
-// is raised part of the way towards them.
+// lobbies, and a rank whose player aims and positions clearly better than is
+// typical for it is raised.
 //
 // A player is never penalised for not being active on a platform: a missing
 // source is left out instead of counted as zero, and its weight is spread
 // over the components that are present.
 //
 // faceit is the player's own Faceit data and may be nil.
-func ComputeSkillScore(p *LeetifyProfile, faceit *FaceitPlayer) float64 {
+func (s ScoreSettings) SkillScore(p *LeetifyProfile, faceit *FaceitPlayer) float64 {
 	if p.PrivacyMode != "public" {
 		return -1
 	}
 
 	var weighted, totalWeight float64
 	add := func(value, weight float64, present bool) {
-		if present {
+		if present && weight > 0 {
 			weighted += value * weight
 			totalWeight += weight
 		}
 	}
 
-	rank := AssessRank(p, faceit)
-	add(rank.Value, weightRank*rank.Confidence, rank.Value > 0)
+	rank := s.AssessRank(p, faceit)
+	rankWeight := s.WeightRank
+	if s.ScaleByConfidence {
+		rankWeight *= rank.Confidence
+	}
+	add(rank.Value, rankWeight, rank.Value > 0)
 
 	// Leetify reports 0 for ratings it has no data for.
-	add(p.Rating.Aim/100, weightAim, p.Rating.Aim > 0)
-	add(p.Rating.Positioning/100, weightPositioning, p.Rating.Positioning > 0)
-	add(p.Rating.Utility/100, 0.04, p.Rating.Utility > 0)
+	add(p.Rating.Aim/100, s.WeightAim, p.Rating.Aim > 0)
+	add(p.Rating.Positioning/100, s.WeightPositioning, p.Rating.Positioning > 0)
+	add(p.Rating.Utility/100, s.WeightUtility, p.Rating.Utility > 0)
 
 	ct, t := p.Stats.CtOpeningDuelSuccessPercentage, p.Stats.TOpeningDuelSuccessPercentage
-	add(normalize((ct+t)/2, 0, 100), 0.08, ct > 0 || t > 0)
+	add(normalize((ct+t)/2, 0, 100), s.WeightOpening, ct > 0 || t > 0)
 
-	add(normalize(computeRecentForm(p.RecentMatches), -0.2, 0.3), 0.08, len(p.RecentMatches) > 0)
+	add(normalize(computeRecentForm(p.RecentMatches), -0.2, 0.3), s.WeightForm, len(p.RecentMatches) > 0)
 
 	if totalWeight == 0 {
 		return -1
@@ -126,8 +128,14 @@ func faceitEloOf(p *LeetifyProfile) float64 {
 	return 0
 }
 
-// ComputeFaceitScore returns a 0–100 score from Faceit data alone, for
-// players who are on Faceit but have no public Leetify profile.
+// ComputeFaceitScore is ScoreSettings.FaceitScore with the default settings.
+func ComputeFaceitScore(f *FaceitPlayer) float64 {
+	return DefaultScoreSettings().FaceitScore(f)
+}
+
+// FaceitScore returns a 0–100 score from Faceit data alone, for players who
+// are on Faceit but have no public Leetify profile. Returns -1 when the
+// settings use none of it.
 //
 //	75% current ELO
 //	25% recent form over the last FaceitRecentMatches matches
@@ -138,11 +146,26 @@ func faceitEloOf(p *LeetifyProfile) float64 {
 // confidence here: the only thing it could shift to is the recent form, and
 // K/D and ADR depend on how strong the lobbies were.
 //
-// Without recent matches the ELO stands alone.
-func ComputeFaceitScore(f *FaceitPlayer) float64 {
-	score := AssessRank(nil, f).Value
-	if f.Recent != nil && f.Recent.Matches > 0 {
-		score = score*0.75 + faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)*0.25
+// Without recent matches the ELO stands alone, and the form counts for less
+// the longer ago the matches were played (see formFreshness). The ELO is
+// left out when the rank weight is 0 or Faceit ranks are not used, and the
+// form when the form weight is 0.
+func (s ScoreSettings) FaceitScore(f *FaceitPlayer) float64 {
+	rank := s.AssessRank(nil, f).Value
+	useRank := rank > 0 && s.WeightRank > 0
+	useForm := s.UseFaceit && s.WeightForm > 0 && f.Recent != nil && f.Recent.Matches > 0
+
+	var score float64
+	switch {
+	case useRank && useForm:
+		w := 0.25 * formFreshness(f.Recent.LastMatchAt)
+		score = rank*(1-w) + faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)*w
+	case useRank:
+		score = rank
+	case useForm:
+		score = faceitMatchRating(f.Recent.KDRatio, f.Recent.ADR)
+	default:
+		return -1
 	}
 	return math.Round(score*10000) / 100
 }
@@ -154,20 +177,33 @@ const (
 	steamWeightWithFaceit  = 0.10
 )
 
-// CombineScores merges every available source (each may be nil) into the
-// final skill score and the privacy mode to store.
+// CombineScores is ScoreSettings.Combine with the default settings.
+func CombineScores(profile *LeetifyProfile, steamStats *CS2Stats, faceit *FaceitPlayer) (score *float64, privacyMode string) {
+	return DefaultScoreSettings().Combine(profile, steamStats, faceit)
+}
+
+// Combine merges every available source (each may be nil) into the final
+// skill score and the privacy mode to store. With the default settings:
 //
 //	public Leetify   → Leetify score, using Faceit's own ELO when available,
 //	                   blended 95/5 with Steam lifetime stats
 //	Faceit only      → Faceit score blended 90/10 with Steam, mode "faceit_only"
 //	Steam only       → Steam lifetime stats, mode "steam_only"
 //	nothing          → nil score
-func CombineScores(profile *LeetifyProfile, steamStats *CS2Stats, faceit *FaceitPlayer) (score *float64, privacyMode string) {
+//
+// A source the settings leave nothing of counts as missing.
+func (s ScoreSettings) Combine(profile *LeetifyProfile, steamStats *CS2Stats, faceit *FaceitPlayer) (score *float64, privacyMode string) {
 	privacyMode = "unknown"
-	leetifyScore := -1.0
+	leetifyScore, faceitScore := -1.0, -1.0
 	if profile != nil {
 		privacyMode = profile.PrivacyMode
-		leetifyScore = ComputeSkillScore(profile, faceit)
+		leetifyScore = s.SkillScore(profile, faceit)
+	}
+	if faceit != nil {
+		faceitScore = s.FaceitScore(faceit)
+	}
+	if !s.UseSteam {
+		steamStats = nil
 	}
 
 	blend := func(primary, steamWeight float64) *float64 {
@@ -179,8 +215,8 @@ func CombineScores(profile *LeetifyProfile, steamStats *CS2Stats, faceit *Faceit
 	switch {
 	case leetifyScore >= 0:
 		return blend(leetifyScore, steamWeightWithLeetify), privacyMode
-	case faceit != nil:
-		return blend(ComputeFaceitScore(faceit), steamWeightWithFaceit), "faceit_only"
+	case faceitScore >= 0:
+		return blend(faceitScore, steamWeightWithFaceit), "faceit_only"
 	case steamStats != nil:
 		steamScore := ComputeSteamScore(steamStats)
 		return &steamScore, "steam_only"

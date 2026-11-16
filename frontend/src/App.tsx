@@ -3,8 +3,8 @@ import { useTournamentStore } from './store/tournament'
 import PlayerInput from './components/PlayerInput'
 import PlayerList from './components/PlayerList'
 import TeammateRequests from './components/TeammateRequests'
-import TeamBuilder from './components/TeamBuilder'
-import TeamView from './components/TeamView'
+import DraftBuilder from './components/DraftBuilder'
+import DraftView from './components/DraftView'
 import TournamentList from './components/TournamentList'
 import CopyButton from './components/CopyButton'
 
@@ -101,10 +101,10 @@ export default function App() {
               <h2 className="panel-title mb-2">Add players</h2>
               <PlayerInput />
             </div>
+            {tournament.players.length >= 2 && <DraftBuilder />}
             <PlayerList />
             {tournament.players.length >= 2 && <TeammateRequests />}
-            {tournament.players.length >= 2 && <TeamBuilder />}
-            <TeamView />
+            <DraftView />
           </div>
         )}
       </main>
