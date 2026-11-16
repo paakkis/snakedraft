@@ -1,4 +1,4 @@
-import type { Tournament, Player, Team, BalanceResult, TeammateRequest } from '../types'
+import type { Tournament, Player, Team, Draft, DraftSettings, TeammateRequest } from '../types'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`/api${path}`, {
@@ -55,10 +55,21 @@ export const removeTeammateRequest = (tournamentId: string, requestId: string): 
         method: 'DELETE',
     })
 
-export const balanceTeams = (tournamentId: string, team_size?: number): Promise<BalanceResult> =>
-    request(`/tournaments/${tournamentId}/balance`, {
+export const createDraft = (tournamentId: string, name: string, settings: DraftSettings): Promise<Draft> =>
+    request(`/tournaments/${tournamentId}/drafts`, {
         method: 'POST',
-        body: JSON.stringify({ team_size }),
+        body: JSON.stringify({ name, settings }),
+    })
+
+export const renameDraft = (tournamentId: string, draftId: string, name: string): Promise<{ name: string }> =>
+    request(`/tournaments/${tournamentId}/drafts/${draftId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+    })
+
+export const deleteDraft = (tournamentId: string, draftId: string): Promise<{ ok: boolean }> =>
+    request(`/tournaments/${tournamentId}/drafts/${draftId}`, {
+        method: 'DELETE',
     })
 
 export const movePlayer = (

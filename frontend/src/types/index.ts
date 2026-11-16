@@ -79,9 +79,51 @@ export interface Player {
 export interface Team {
   id: string
   tournament_id: string
+  draft_id: string
   name: string
-  avg_skill_score: number
-  players: Player[]
+  avg_skill_score: number   // average of the players' scores in the draft
+  players: Player[]         // skill_score is the score in the draft
+}
+
+/** What a skill score is built from. Mirrors services.ScoreSettings. */
+export interface ScoreSettings {
+  use_faceit: boolean
+  use_premier: boolean
+  use_steam: boolean
+  // Only the ratios between the weights matter; 0 leaves a component out
+  weight_rank: number
+  weight_aim: number
+  weight_positioning: number
+  weight_utility: number
+  weight_opening: number
+  weight_form: number
+  scale_by_confidence: boolean
+  adjust_for_performance: boolean
+  adjust_for_mechanics: boolean
+}
+
+/** Everything that decides how a draft turns out. */
+export interface DraftSettings extends ScoreSettings {
+  max_spread: number
+  honor_requests: boolean
+  fallback_to_full_model: boolean
+}
+
+export interface DraftScore {
+  score: number
+  estimated?: boolean   // the settings could not score the player; the full model stood in
+}
+
+/** One set of teams, with the settings and scores it was made with. */
+export interface Draft {
+  id: string
+  tournament_id: string
+  name: string
+  settings: DraftSettings
+  teams: Team[]
+  scores: Record<string, DraftScore>               // by player id; missing = could not be scored
+  request_statuses: Record<string, RequestStatus>  // by request id, as the draft left them
+  created_at: string
 }
 
 export type RequestStatus =
@@ -95,7 +137,6 @@ export interface TeammateRequest {
   tournament_id: string
   requester_id: string
   requested_id: string
-  status?: RequestStatus    // only present in a balance result
 }
 
 export interface Tournament {
@@ -105,16 +146,6 @@ export interface Tournament {
   status: 'signup' | 'balanced' | 'active' | 'finished'
   created_at: string
   players: Player[]
-  teams: Team[]
+  drafts: Draft[]
   teammate_requests: TeammateRequest[]
-  variance?: number
-}
-
-export interface BalanceResult {
-  variance: number
-  teams: Team[]
-  bench_players: string[]
-  spread: number
-  baseline_spread: number
-  requests: TeammateRequest[]
 }

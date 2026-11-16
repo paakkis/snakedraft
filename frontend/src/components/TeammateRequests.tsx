@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import type { Player, RequestStatus, TeammateRequest } from '../types'
-import { useTournamentStore } from '../store/tournament'
+import { activeDraftOf, useTournamentStore } from '../store/tournament'
 
 const STATUS: Record<RequestStatus, { label: string; className: string; title: string }> = {
   honored: {
@@ -104,9 +104,10 @@ function FriendGroup({ members, links, selectedId, onPick, onRemove, statusOf }:
 
 export default function TeammateRequests() {
   const {
-    tournament, requestError, requestStatuses,
+    tournament, requestError,
     addTeammateRequest, removeTeammateRequest,
   } = useTournamentStore()
+  const draft = useTournamentStore(activeDraftOf)
   const [requesterId, setRequesterId] = useState('')
   const [requestedId, setRequestedId] = useState('')
   const [view, setView] = useState<View>(() => {
@@ -121,15 +122,16 @@ export default function TeammateRequests() {
   const requests = tournament.teammate_requests
   const maxGroup = tournament.team_size - 1
 
-  // Status follows the teams as they are right now, so it stays correct
-  // after players are dragged between teams or the page is reloaded.
+  // Status follows the teams of the open draft as they are right now, so it
+  // stays correct after players are dragged between teams.
+  const teams = draft?.teams ?? []
   const teamOf = new Map<string, string>()
-  tournament.teams.forEach(t => t.players.forEach(p => teamOf.set(p.id, t.id)))
+  teams.forEach(t => t.players.forEach(p => teamOf.set(p.id, t.id)))
   const statusOf = (r: TeammateRequest): RequestStatus | undefined => {
-    if (tournament.teams.length === 0) return undefined
+    if (teams.length === 0) return undefined
     const a = teamOf.get(r.requester_id), b = teamOf.get(r.requested_id)
     if (a && b) return a === b ? 'honored' : 'dropped_for_balance'
-    return requestStatuses[r.id] === 'illegal_chain' ? 'illegal_chain' : 'player_unavailable'
+    return draft?.request_statuses[r.id] === 'illegal_chain' ? 'illegal_chain' : 'player_unavailable'
   }
   const together = requests.filter(r => statusOf(r) === 'honored').length
 
@@ -175,9 +177,9 @@ export default function TeammateRequests() {
       <div className="flex items-center justify-between gap-3 flex-wrap px-3 py-2 border-b border-zinc-800">
         <h2 className="panel-title">
           Teammate requests <span className="text-zinc-600">{requests.length}</span>
-          {tournament.teams.length > 0 && requests.length > 0 && (
+          {draft && teams.length > 0 && requests.length > 0 && (
             <span className="ml-2 normal-case tracking-normal font-normal text-zinc-500">
-              {together} of {requests.length} together
+              {together} of {requests.length} together in {draft.name}
             </span>
           )}
         </h2>

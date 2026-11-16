@@ -1,16 +1,34 @@
 import { create } from 'zustand'
-import type { Tournament, Team, RequestStatus } from '../types'
+import type { Tournament, Team, Draft, DraftSettings } from '../types'
 import * as api from '../api/client'
+import { averageScore } from '../lib/stats'
+
+/** The draft that is open: the chosen one, or else the newest. */
+export const activeDraftOf = (s: { tournament: Tournament | null; activeDraftId: string | null }): Draft | undefined => {
+  const drafts = s.tournament?.drafts ?? []
+  return drafts.find(d => d.id === s.activeDraftId) ?? drafts[drafts.length - 1]
+}
+
+const withAverage = (team: Team, players: Team['players']): Team => ({
+  ...team, players, avg_skill_score: averageScore(players.map(p => p.skill_score)),
+})
+
+// The API sends null for an empty list in a few places
+const normalise = (t: Tournament): Tournament => ({
+  ...t,
+  players: t.players ?? [],
+  drafts: t.drafts ?? [],
+  teammate_requests: t.teammate_requests ?? [],
+})
 
 interface TournamentStore {
   tournament: Tournament | null
   loading: boolean
   addingPlayer: boolean
   error: string | null
-  benchPlayerIds: string[]
   requestError: string | null
-  // Outcome of each teammate request in the latest balance run, by request id
-  requestStatuses: Record<string, RequestStatus>
+  draftError: string | null
+  activeDraftId: string | null
 
   addTeammateRequest: (requesterId: string, requestedId: string) => Promise<boolean>
   removeTeammateRequest: (requestId: string) => Promise<void>
@@ -20,8 +38,11 @@ interface TournamentStore {
   addPlayer: (steamUrl: string) => Promise<boolean>
   refreshPlayers: (playerIds: string[]) => Promise<void>
   removePlayer: (playerId: string) => Promise<void>
-  balanceTeams: () => Promise<void>
-  movePlayer: (playerId: string, fromTeamId: string, toTeamId: string) => Promise<void>
+  setActiveDraft: (draftId: string) => void
+  createDraft: (name: string, settings: DraftSettings) => Promise<boolean>
+  renameDraft: (draftId: string, name: string) => Promise<void>
+  deleteDraft: (draftId: string) => Promise<void>
+  movePlayer: (draftId: string, playerId: string, fromTeamId: string, toTeamId: string) => Promise<void>
   clearError: () => void
   reset: () => void
 }
@@ -31,23 +52,23 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
   loading: false,
   addingPlayer: false,
   error: null,
-  benchPlayerIds: [],
   requestError: null,
-  requestStatuses: {},
+  draftError: null,
+  activeDraftId: null,
   refreshingIds: [],
 
   clearError: () => set({ error: null }),
 
   reset: () => set({
     tournament: null, loading: false, addingPlayer: false, error: null,
-    benchPlayerIds: [], requestError: null, requestStatuses: {},
+    requestError: null, draftError: null, activeDraftId: null,
   }),
 
   createTournament: async (name, teamSize) => {
     set({ loading: true, error: null })
     try {
       const tournament = await api.createTournament(name, teamSize)
-      set({ tournament: { ...tournament, players: [], teams: [], teammate_requests: [] } })
+      set({ tournament: normalise(tournament), activeDraftId: null })
     } catch (e) {
       set({ error: (e as Error).message })
     } finally {
@@ -59,12 +80,7 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
     set({ loading: true, error: null })
     try {
       const tournament = await api.getTournament(id)
-      set({
-        tournament: { ...tournament, teammate_requests: tournament.teammate_requests ?? [] },
-        benchPlayerIds: [],
-        requestError: null,
-        requestStatuses: {},
-      })
+      set({ tournament: normalise(tournament), requestError: null, draftError: null })
     } catch (e) {
       set({ error: (e as Error).message })
     } finally {
@@ -111,7 +127,7 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
     }
     try {
       const fresh = await api.getTournament(tournament.id)
-      set({ tournament: { ...fresh, teammate_requests: fresh.teammate_requests ?? [] } })
+      set({ tournament: normalise(fresh) })
     } catch (e) {
       set({ error: (e as Error).message })
     }
@@ -129,6 +145,13 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
         tournament: {
           ...s.tournament!,
           players: s.tournament!.players.filter(p => p.id !== playerId),
+          // …and takes them out of every draft
+          drafts: s.tournament!.drafts.map(d => ({
+            ...d,
+            teams: d.teams.map(t =>
+              t.players.some(p => p.id === playerId) ? withAverage(t, t.players.filter(p => p.id !== playerId)) : t,
+            ),
+          })),
           // The server deletes a removed player's requests along with them
           teammate_requests: s.tournament!.teammate_requests.filter(
             r => r.requester_id !== playerId && r.requested_id !== playerId,
@@ -176,62 +199,87 @@ export const useTournamentStore = create<TournamentStore>((set, get) => ({
     }
   },
 
-  balanceTeams: async () => {
-    set({ loading: true, error: null })
+  setActiveDraft: (draftId) => set({ activeDraftId: draftId }),
+
+  createDraft: async (name, settings) => {
+    const { tournament } = get()
+    if (!tournament) return false
+    set({ loading: true, draftError: null })
     try {
-      const { tournament } = get()
-      const result = await api.balanceTeams(tournament!.id, tournament!.team_size)
+      const draft = await api.createDraft(tournament.id, name, settings)
       set(s => ({
-        tournament: {
-          ...s.tournament!,
-          teams: result.teams,
-          variance: result.variance,
-          status: 'balanced',
-        },
-        benchPlayerIds: result.bench_players ?? [],
-        requestStatuses: Object.fromEntries(
-          (result.requests ?? []).flatMap(r => (r.status ? [[r.id, r.status]] : [])),
-        ),
+        tournament: { ...s.tournament!, drafts: [...s.tournament!.drafts, draft], status: 'balanced' },
+        activeDraftId: draft.id,
       }))
+      return true
     } catch (e) {
-      set({ error: (e as Error).message })
+      set({ draftError: (e as Error).message })
+      return false
     } finally {
       set({ loading: false })
     }
   },
 
-  movePlayer: async (playerId, fromTeamId, toTeamId) => {
+  renameDraft: async (draftId, name) => {
+    const { tournament } = get()
+    if (!tournament) return
+    set({ draftError: null })
+    try {
+      const saved = await api.renameDraft(tournament.id, draftId, name)
+      set(s => ({
+        tournament: {
+          ...s.tournament!,
+          drafts: s.tournament!.drafts.map(d => (d.id === draftId ? { ...d, name: saved.name } : d)),
+        },
+      }))
+    } catch (e) {
+      set({ draftError: (e as Error).message })
+    }
+  },
+
+  deleteDraft: async (draftId) => {
+    const { tournament } = get()
+    if (!tournament) return
+    set({ draftError: null })
+    try {
+      await api.deleteDraft(tournament.id, draftId)
+      set(s => ({
+        tournament: { ...s.tournament!, drafts: s.tournament!.drafts.filter(d => d.id !== draftId) },
+        activeDraftId: s.activeDraftId === draftId ? null : s.activeDraftId,
+      }))
+    } catch (e) {
+      set({ draftError: (e as Error).message })
+    }
+  },
+
+  movePlayer: async (draftId, playerId, fromTeamId, toTeamId) => {
     const { tournament } = get()
     if (!tournament) return
 
     // Optimistic update
     set(s => {
-      const movingPlayer = s.tournament!.teams
-        .flatMap(t => t.players)
-        .find(p => p.id === playerId)
-      if (!movingPlayer) return s
+      const draft = s.tournament!.drafts.find(d => d.id === draftId)
+      const movingPlayer = draft?.teams.find(t => t.id === fromTeamId)?.players.find(p => p.id === playerId)
+      if (!draft || !movingPlayer) return s
 
-      const teams: Team[] = s.tournament!.teams.map(team => {
-        if (team.id === fromTeamId) {
-          const players = team.players.filter(p => p.id !== playerId)
-          const avg = players.reduce((sum, p) => sum + (p.skill_score ?? 0), 0) / (players.length || 1)
-          return { ...team, players, avg_skill_score: avg }
-        }
-        if (team.id === toTeamId) {
-          const players = [...team.players, movingPlayer]
-          const avg = players.reduce((sum, p) => sum + (p.skill_score ?? 0), 0) / (players.length || 1)
-          return { ...team, players, avg_skill_score: avg }
-        }
+      const teams = draft.teams.map(team => {
+        if (team.id === fromTeamId) return withAverage(team, team.players.filter(p => p.id !== playerId))
+        if (team.id === toTeamId) return withAverage(team, [...team.players, movingPlayer])
         return team
       })
-      return { tournament: { ...s.tournament!, teams } }
+      return {
+        tournament: {
+          ...s.tournament!,
+          drafts: s.tournament!.drafts.map(d => (d.id === draftId ? { ...d, teams } : d)),
+        },
+      }
     })
 
     try {
       await api.movePlayer(tournament.id, playerId, fromTeamId, toTeamId)
     } catch (e) {
       // Revert on failure
-      set({ error: (e as Error).message })
+      set({ draftError: (e as Error).message })
       get().loadTournament(tournament.id)
     }
   },
